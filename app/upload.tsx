@@ -110,6 +110,13 @@ export default function UploadScreen() {
 
             // 🚀 NEW: Activity Data (Account History)
             const activity = await extractActivityData(zip);
+            animateProgress(92);
+
+            // 🚀 NEW: Pending Requests
+            const pendingRequests = await extractUserList(zip, [
+                'connections/followers_and_following/pending_follow_requests.json',
+                'pending_follow_requests.json',
+            ]);
             animateProgress(95);
 
             if (!followers.length && !following.length) {
@@ -123,6 +130,7 @@ export default function UploadScreen() {
             const data = {
                 followers,
                 following,
+                pendingRequests,
                 engagement,
                 activity,
                 processedAt: Date.now(),

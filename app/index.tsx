@@ -8,8 +8,9 @@ import {
     Image,
     Dimensions,
     ScrollView,
+    Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Link } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -69,8 +70,8 @@ export default function HomeScreen() {
             />
 
             {/* Decorative blobs */}
-            <View style={styles.blob1} />
-            <View style={styles.blob2} />
+            <View style={styles.blob1} pointerEvents="none" />
+            <View style={styles.blob2} pointerEvents="none" />
 
             <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
                 <Animated.View
@@ -136,7 +137,10 @@ export default function HomeScreen() {
                             </Text>
                             <TouchableOpacity
                                 style={styles.inlineBtn}
-                                onPress={() => router.push('/browser')}
+                                onPress={() => router.push({
+                                    pathname: '/get-data',
+                                    params: { startUrl: 'https://accountscenter.instagram.com/info_and_permissions/' }
+                                })}
                             >
                                 <Ionicons name="arrow-forward-circle" size={20} color="#00BCD4" />
                                 <Text style={styles.inlineBtnText}>Go to Download Page</Text>
@@ -147,7 +151,11 @@ export default function HomeScreen() {
                     {/* CTAs */}
                     <TouchableOpacity
                         style={styles.primaryBtn}
-                        onPress={() => router.push('/browser')}
+                        onPress={() => {
+                            console.log('Navigating...');
+                            Alert.alert('Navigating', 'Going to Instagram Data page...');
+                            router.navigate('/get-data');
+                        }}
                         activeOpacity={0.85}
                     >
                         <LinearGradient

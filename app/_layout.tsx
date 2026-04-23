@@ -22,7 +22,7 @@ export default function RootLayout() {
                     options={{ title: 'Import Data', headerBackTitle: 'Back' }}
                 />
                 <Stack.Screen
-                    name="browser"
+                    name="get-data"
                     options={{ title: 'Get Instagram Data', headerBackTitle: 'Back' }}
                 />
                 <Stack.Screen

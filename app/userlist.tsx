@@ -20,6 +20,7 @@ import * as FileSystem from 'expo-file-system';
 interface InstagramData {
     followers: string[];
     following: string[];
+    pendingRequests?: string[];
     processedAt: number;
 }
 
@@ -27,6 +28,7 @@ type ListType =
     | 'notfollowingback'
     | 'dontfollowback'
     | 'mutuals'
+    | 'pending'
     | 'followers'
     | 'following';
 
@@ -34,6 +36,7 @@ const TYPE_LABELS: Record<ListType, string> = {
     notfollowingback: 'Not Following Back',
     dontfollowback: "You Don't Follow Back",
     mutuals: 'Mutual Followers',
+    pending: 'Pending Requests',
     followers: 'All Followers',
     following: 'All Following',
 };
@@ -42,6 +45,7 @@ const TYPE_COLORS: Record<ListType, string> = {
     notfollowingback: '#FF5252',
     dontfollowback: '#FFC107',
     mutuals: '#00BCD4',
+    pending: '#FFC107',
     followers: '#E040FB',
     following: '#7C4DFF',
 };
@@ -50,6 +54,7 @@ const TYPE_ICONS: Record<ListType, string> = {
     notfollowingback: 'person-remove',
     dontfollowback: 'eye-off',
     mutuals: 'people-circle',
+    pending: 'time',
     followers: 'people',
     following: 'person-add',
 };
@@ -81,6 +86,8 @@ function UserRow({ username, listType }: { username: string; listType: ListType 
                 return { label: 'Unfollow', icon: 'person-remove-outline', color: '#FF5252' };
             case 'dontfollowback':
                 return { label: 'Follow', icon: 'person-add-outline', color: '#00E676' };
+            case 'pending':
+                return { label: 'Cancel', icon: 'close-circle-outline', color: '#FFC107' };
             default:
                 return { label: 'Profile', icon: 'logo-instagram', color: '#E040FB' };
         }
@@ -154,6 +161,8 @@ export default function UserListScreen() {
                 return data.followers.filter((u) => !followingSet.has(u));
             case 'mutuals':
                 return data.following.filter((u) => followerSet.has(u));
+            case 'pending':
+                return data.pendingRequests || [];
             case 'followers':
                 return data.followers;
             case 'following':

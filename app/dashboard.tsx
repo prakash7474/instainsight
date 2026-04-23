@@ -20,6 +20,7 @@ const { width } = Dimensions.get('window');
 interface InstagramData {
     followers: string[];
     following: string[];
+    pendingRequests?: string[];
     engagement?: {
         topLikes: { user: string; count: number }[];
         totalLikes: number;
@@ -37,6 +38,7 @@ interface Stats {
     notFollowingBack: number;
     dontFollowBack: number;
     mutuals: number;
+    pendingRequests: number;
 }
 
 function computeStats(data: InstagramData): Stats {
@@ -46,6 +48,7 @@ function computeStats(data: InstagramData): Stats {
     const notFollowingBack = data.following.filter((u) => !followerSet.has(u)).length;
     const dontFollowBack = data.followers.filter((u) => !followingSet.has(u)).length;
     const mutuals = data.following.filter((u) => followerSet.has(u)).length;
+    const pendingRequests = data.pendingRequests?.length || 0;
 
     return {
         totalFollowers: data.followers.length,
@@ -53,6 +56,7 @@ function computeStats(data: InstagramData): Stats {
         notFollowingBack,
         dontFollowBack,
         mutuals,
+        pendingRequests,
     };
 }
 
@@ -305,6 +309,16 @@ export default function DashboardScreen() {
                                 color="#00BCD4"
                                 onPress={() => router.push({ pathname: '/userlist', params: { type: 'mutuals' } })}
                             />
+                        </View>
+                        <View style={styles.statsGrid}>
+                            <StatCard
+                                label="Pending"
+                                value={stats.pendingRequests}
+                                icon="time-outline"
+                                color="#FFC107"
+                                onPress={() => router.push({ pathname: '/userlist', params: { type: 'pending' } })}
+                            />
+                            <View style={{ flex: 1 }} />
                         </View>
                         <View style={styles.chartCard}>
                             <Text style={styles.chartTitle}>Relationship Distribution</Text>
