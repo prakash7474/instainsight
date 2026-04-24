@@ -335,10 +335,7 @@ const styles = StyleSheet.create({
         borderRadius: 20,
         borderWidth: 1,
         borderColor: '#E040FB44',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.5,
-        shadowRadius: 15,
+        boxShadow: '0px 10px 15px rgba(0,0,0,0.5)',
         elevation: 12,
     },
     guideHeader: {
@@ -421,10 +418,7 @@ const styles = StyleSheet.create({
         left: 20,
         right: 20,
         zIndex: 1000,
-        shadowColor: '#E040FB',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.4,
-        shadowRadius: 10,
+        boxShadow: '0px 4px 10px rgba(224,64,251,0.4)',
         elevation: 8,
     },
     actionGradient: {

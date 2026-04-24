@@ -37,52 +37,98 @@ export default function UploadScreen() {
         setProgress(to);
     };
 
-    const pickAndProcess = async () => {
-        try {
-            setStage('reading');
-            setErrorMsg('');
+const pickAndProcess = async () => {
+    let tempPath: string | null = null;
+    try {
+        setStage('reading');
+        setErrorMsg('');
 
-            const result = await DocumentPicker.getDocumentAsync({
-                type: ['application/zip', 'application/x-zip-compressed', '*/*'],
-                copyToCacheDirectory: true,
+        const result = await DocumentPicker.getDocumentAsync({
+            type: ['application/zip', 'application/x-zip-compressed', '*/*'],
+            copyToCacheDirectory: true,
+        });
+
+        if (result.canceled || !result.assets?.length) {
+            setStage('idle');
+            return;
+        }
+
+        const asset = result.assets[0];
+        setFileName(asset.name);
+        animateProgress(10);
+
+        let zipInput: string | Blob;
+        let base64 = '';
+
+        if (Platform.OS === 'web') {
+            // Web: fetch blob directly from URI
+            const response = await fetch(asset.uri);
+            const blob = await response.blob();
+            
+            // Validate ZIP magic bytes (PK = 0x50 0x4B)
+            const header = await blob.slice(0, 2).arrayBuffer();
+            const bytes = new Uint8Array(header);
+            if (bytes.length < 2 || bytes[0] !== 0x50 || bytes[1] !== 0x4B) {
+                throw new Error('The selected file does not appear to be a valid ZIP file. Please choose your Instagram data export (.zip).');
+            }
+            
+            zipInput = blob;
+            animateProgress(35);
+        } else {
+            // Native: copy to a reliable local file path first
+            const destPath = `${FileSystem.documentDirectory}temp_instagram_export.zip`;
+            tempPath = destPath;
+
+            // Clean up any previous temp file
+            try {
+                const prevInfo = await FileSystem.getInfoAsync(destPath);
+                if (prevInfo.exists) {
+                    await FileSystem.deleteAsync(destPath, { idempotent: true });
+                }
+            } catch {
+                // ignore
+            }
+
+            await FileSystem.copyAsync({
+                from: asset.uri,
+                to: destPath,
+            });
+            animateProgress(20);
+
+            // Verify copied file
+            const fileInfo = await FileSystem.getInfoAsync(destPath, { size: true });
+            if (!fileInfo.exists || (fileInfo as any).size === 0) {
+                throw new Error('Failed to copy the selected file. The file may be empty, corrupted, or inaccessible.');
+            }
+            animateProgress(25);
+
+            // Read as base64
+            base64 = await FileSystem.readAsStringAsync(destPath, {
+                encoding: FileSystem.EncodingType.Base64,
             });
 
-            if (result.canceled || !result.assets?.length) {
-                setStage('idle');
-                return;
+            if (!base64 || base64.length === 0) {
+                throw new Error('Failed to read the ZIP file contents. The file may be empty or corrupted.');
             }
 
-            const asset = result.assets[0];
-            setFileName(asset.name);
-            animateProgress(15);
-
-            // Read file as base64
-            setStage('extracting');
-            let base64 = '';
-
-            if (Platform.OS === 'web') {
-                // Web fallback: fetch blob from URI and read as base64
-                const response = await fetch(asset.uri);
-                const blob = await response.blob();
-                base64 = await new Promise((resolve) => {
-                    const reader = new FileReader();
-                    reader.onloadend = () => {
-                        const res = reader.result as string;
-                        resolve(res.split(',')[1]); // Remove data: url prefix
-                    };
-                    reader.readAsDataURL(blob);
-                });
-            } else {
-                base64 = await FileSystem.readAsStringAsync(asset.uri, {
-                    encoding: FileSystem.EncodingType.Base64,
-                });
+            // Validate ZIP magic bytes in base64: PK -> UEs
+            if (!base64.startsWith('UEs')) {
+                throw new Error('The selected file does not appear to be a valid ZIP file. Please choose your Instagram data export (.zip).');
             }
+
+            zipInput = base64;
             animateProgress(35);
+        }
 
-            // Unzip
-            const zip = new JSZip();
-            await zip.loadAsync(base64, { base64: true });
-            animateProgress(55);
+        // Unzip
+        setStage('extracting');
+        const zip = new JSZip();
+        if (Platform.OS === 'web' && zipInput instanceof Blob) {
+            await zip.loadAsync(zipInput);
+        } else {
+            await zip.loadAsync(zipInput as string, { base64: true });
+        }
+        animateProgress(55);
 
             setStage('parsing');
             // Parse followers and following from Instagram export
@@ -145,6 +191,14 @@ export default function UploadScreen() {
             setStage('error');
             setErrorMsg(err?.message || 'An error occurred while processing the file. Check if it is a valid Instagram export.');
             console.error(err);
+        } finally {
+            if (tempPath) {
+                try {
+                    await FileSystem.deleteAsync(tempPath, { idempotent: true });
+                } catch {
+                    // ignore cleanup errors
+                }
+            }
         }
     };
 

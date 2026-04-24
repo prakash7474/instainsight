@@ -402,6 +402,11 @@ export default function DashboardScreen() {
                     </View>
                 )}
 
+                <TouchableOpacity style={[styles.reimportBtn, { marginBottom: 10, borderColor: '#00ffcc44', backgroundColor: '#00ffcc11' }]} onPress={() => router.push('/(media)/posts')}>
+                    <Ionicons name="images" size={18} color="#00ffcc" />
+                    <Text style={[styles.reimportText, { color: '#00ffcc' }]}>Media Gallery</Text>
+                </TouchableOpacity>
+
                 <TouchableOpacity style={styles.reimportBtn} onPress={() => router.push('/upload')}>
                     <Ionicons name="refresh" size={18} color="#E040FB" />
                     <Text style={styles.reimportText}>Import New Data</Text>

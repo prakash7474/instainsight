@@ -33,6 +33,10 @@ export default function RootLayout() {
                     name="userlist"
                     options={{ title: 'User List', headerBackTitle: 'Back' }}
                 />
+                <Stack.Screen
+                    name="(media)"
+                    options={{ headerShown: false }}
+                />
             </Stack>
         </GestureHandlerRootView>
     );

@@ -70,8 +70,8 @@ export default function HomeScreen() {
             />
 
             {/* Decorative blobs */}
-            <View style={styles.blob1} pointerEvents="none" />
-            <View style={styles.blob2} pointerEvents="none" />
+            <View style={[styles.blob1, { pointerEvents: 'none' }]} />
+            <View style={[styles.blob2, { pointerEvents: 'none' }]} />
 
             <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
                 <Animated.View
@@ -240,10 +240,7 @@ const styles = StyleSheet.create({
         borderRadius: 28,
         alignItems: 'center',
         justifyContent: 'center',
-        shadowColor: '#E040FB',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.5,
-        shadowRadius: 20,
+        boxShadow: '0px 8px 20px rgba(224,64,251,0.5)',
         elevation: 12,
     },
     appName: {
@@ -319,10 +316,7 @@ const styles = StyleSheet.create({
         borderRadius: 16,
         overflow: 'hidden',
         marginBottom: 14,
-        shadowColor: '#E040FB',
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.4,
-        shadowRadius: 16,
+        boxShadow: '0px 6px 16px rgba(224,64,251,0.4)',
         elevation: 8,
     },
     btnGradient: {
