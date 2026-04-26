@@ -55,6 +55,8 @@ class PersistentFileLog(
         completionHandler.invoke(null)
       } catch (e: Error) {
         completionHandler.invoke(e)
+      } catch (e: IOException) {
+        completionHandler.invoke(Error(e))
       }
     }
   }
@@ -62,7 +64,7 @@ class PersistentFileLog(
   /**
    * Filter existing entries and remove ones where filter(entry) == false
    */
-  fun purgeEntriesNotMatchingFilter(filter: (_: String) -> Boolean, completionHandler: (_: Error?) -> Unit) {
+  fun purgeEntriesNotMatchingFilter(filter: (_: String) -> Boolean, completionHandler: (_: Exception?) -> Unit) {
     queue.add {
       try {
         this.ensureFileExists()
@@ -71,7 +73,7 @@ class PersistentFileLog(
         this.writeFileLinesSync(reducedContents)
         completionHandler.invoke(null)
       } catch (e: Throwable) {
-        completionHandler.invoke(Error(e))
+        completionHandler.invoke(Exception(e))
       }
     }
   }

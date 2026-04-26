@@ -3,19 +3,22 @@ import { useMediaStore, MediaItem, MediaFolder } from '../store/useMediaStore';
 import { scanDirectoryBatches, isDirectory, waitIdle } from './fileScanner';
 
 export async function processInstagramData(baseUri: string) {
+    baseUri = baseUri.endsWith('/') ? baseUri : baseUri + '/';
     const store = useMediaStore.getState();
     store.setScanning(true);
     store.reset(); // clear existing data
     store.setBasePath(baseUri);
 
     try {
-        // 1. Scan Posts (usually in your_instagram_activity/posts/media/your_posts/ or media/posts/)
-        // We try a few common paths depending on how they exported
+// 1. Scan Posts (media/posts/ or various other locations)
         const potentialPostsPaths = [
-            `${baseUri}your_instagram_activity/content/posts_1/`, // 2024 export structure
-            `${baseUri}your_instagram_activity/posts/media/your_posts/`,
+            `${baseUri}media/posts/`,
+            `${baseUri}your_instagram_activity/media/posts/`,
+            `${baseUri}your_instagram_activity/content/posts_1/`,
+            `${baseUri}your_instagram_activity/posts/`,
+            `${baseUri}your_instagram_activity/content/posts/`,
             `${baseUri}posts/media/your_posts/`,
-            `${baseUri}media/your_posts/`,
+            `${baseUri}content/posts/`,
             `${baseUri}posts/`
         ];
 
@@ -39,9 +42,9 @@ export async function processInstagramData(baseUri: string) {
 
         // 2. Scan Archived Posts
         const potentialArchivedRoots = [
+            `${baseUri}media/archived_posts/`,
             `${baseUri}your_instagram_activity/content/archived_posts/`,
-            `${baseUri}your_instagram_activity/media/archived_posts/`,
-            `${baseUri}media/archived_posts/`
+            `${baseUri}your_instagram_activity/media/archived_posts/`
         ];
 
         let archivedRoot = '';
@@ -75,9 +78,9 @@ export async function processInstagramData(baseUri: string) {
 
         // 3. Scan Stories
         const potentialStoriesRoots = [
+            `${baseUri}media/stories/`,
             `${baseUri}your_instagram_activity/content/stories/`,
-            `${baseUri}your_instagram_activity/media/stories/`,
-            `${baseUri}media/stories/`
+            `${baseUri}your_instagram_activity/media/stories/`
         ];
 
         let storiesRoot = '';
@@ -120,15 +123,16 @@ export async function processInstagramData(baseUri: string) {
 
 // Function to fetch stories for a specific month
 export async function loadStoriesForMonth(baseUri: string, month: string) {
+    baseUri = baseUri.endsWith('/') ? baseUri : baseUri + '/';
     const store = useMediaStore.getState();
 
     // If we already loaded this month, skip
     if (store.storiesMap[month]) return;
 
     const potentialStoriesRoots = [
+        `${baseUri}media/stories/`,
         `${baseUri}your_instagram_activity/content/stories/`,
-        `${baseUri}your_instagram_activity/media/stories/`,
-        `${baseUri}media/stories/`
+        `${baseUri}your_instagram_activity/media/stories/`
     ];
 
     for (const root of potentialStoriesRoots) {

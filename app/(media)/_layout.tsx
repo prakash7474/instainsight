@@ -1,21 +1,31 @@
-import { Tabs } from 'expo-router';
+import { Tabs, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import React, { useEffect } from 'react';
+import React, { useCallback } from 'react';
 import * as FileSystem from 'expo-file-system';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { processInstagramData } from '../../src/utils/mediaParser';
 import { useMediaStore } from '../../src/store/useMediaStore';
 
 export default function MediaLayout() {
     const { posts, archivedPosts, storyMonths, isScanning } = useMediaStore();
 
-    useEffect(() => {
-        // Start scanning on mount if not already scanned
-        if (posts.length === 0 && archivedPosts.length === 0 && storyMonths.length === 0 && !isScanning) {
-            // Assuming data is in documentDirectory + 'instagram_data/' or similar.
-            // If it's stored directly in documentDirectory:
-            processInstagramData(FileSystem.documentDirectory || '');
-        }
-    }, []);
+    useFocusEffect(
+        useCallback(() => {
+            const scan = async () => {
+                const storedPath = await AsyncStorage.getItem('instainsight_media_path');
+                const baseUri = storedPath || (FileSystem.documentDirectory || '');
+                const state = useMediaStore.getState();
+
+                const hasData = state.posts.length > 0 || state.archivedPosts.length > 0 || state.storyMonths.length > 0;
+                const pathChanged = state.basePath !== baseUri;
+
+                if ((!hasData && !state.isScanning) || pathChanged) {
+                    processInstagramData(baseUri);
+                }
+            };
+            scan();
+        }, [])
+    );
 
     return (
         <Tabs

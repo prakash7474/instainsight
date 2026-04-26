@@ -37,6 +37,90 @@ export default function UploadScreen() {
         setProgress(to);
     };
 
+const getExtractedDataDir = (name: string) => {
+        const cleanName = name.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_') || 'instagram_data';
+        return (FileSystem.documentDirectory || '') + cleanName + '/';
+    };
+
+    const clearExtractedData = async (targetDir: string) => {
+        try {
+            const info = await FileSystem.getInfoAsync(targetDir);
+            if (info.exists) {
+                await FileSystem.deleteAsync(targetDir, { idempotent: true });
+            }
+        } catch {
+            // ignore
+        }
+    };
+
+    const extractMediaFiles = async (
+        zip: JSZip,
+        targetDir: string,
+        onProgress?: (current: number, total: number) => void
+    ) => {
+        const mediaExts = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.mp4', '.mov', '.webm'];
+        const files = Object.keys(zip.files);
+
+        const mediaFiles = files.filter((filePath) => {
+            const entry = zip.files[filePath];
+            if (entry.dir) return false;
+            const filename = filePath.split('/').pop() || '';
+            const ext = filename.substring(filename.lastIndexOf('.')).toLowerCase();
+            if (!mediaExts.includes(ext)) return false;
+
+            const lower = filePath.toLowerCase();
+            if (lower.includes('story_interactions')) return false;
+            if (lower.includes('/messages/')) return false;
+
+            return (
+                lower.includes('/posts') ||
+                lower.includes('/archived_posts') ||
+                lower.includes('/stories') ||
+                lower.includes('/content/posts') ||
+                lower.includes('/content/archived_posts') ||
+                lower.includes('/content/stories') ||
+                lower.includes('/media/posts') ||
+                lower.includes('/media/stories') ||
+                lower.includes('/your_posts') ||
+                lower.includes('/your_instagram_activity')
+            );
+        });
+
+        let extracted = 0;
+        const total = mediaFiles.length;
+
+        for (let i = 0; i < mediaFiles.length; i++) {
+            const filePath = mediaFiles[i];
+            const entry = zip.files[filePath];
+            const destPath = `${targetDir}${filePath}`;
+            const destDir = destPath.substring(0, destPath.lastIndexOf('/'));
+
+            try {
+                const dirInfo = await FileSystem.getInfoAsync(destDir);
+                if (!dirInfo.exists) {
+                    await FileSystem.makeDirectoryAsync(destDir, { intermediates: true });
+                }
+            } catch {
+                // ignore directory creation errors
+            }
+
+            const content = await entry.async('base64');
+            await FileSystem.writeAsStringAsync(destPath, content, {
+                encoding: FileSystem.EncodingType.Base64,
+            });
+
+            extracted++;
+            if (onProgress) onProgress(extracted, total);
+
+            // Yield to UI thread every 10 files
+            if (i % 10 === 0) {
+                await new Promise((resolve) => setTimeout(resolve, 0));
+            }
+        }
+
+        return extracted;
+    };
+
 const pickAndProcess = async () => {
     let tempPath: string | null = null;
     try {
@@ -54,11 +138,13 @@ const pickAndProcess = async () => {
         }
 
         const asset = result.assets[0];
-        setFileName(asset.name);
+        const fileName = asset.name;
+        setFileName(fileName);
         animateProgress(10);
 
         let zipInput: string | Blob;
         let base64 = '';
+        const isHtmlZip = fileName.toLowerCase().endsWith('.zip.html');
 
         if (Platform.OS === 'web') {
             // Web: fetch blob directly from URI
@@ -113,7 +199,22 @@ const pickAndProcess = async () => {
 
             // Validate ZIP magic bytes in base64: PK -> UEs
             if (!base64.startsWith('UEs')) {
-                throw new Error('The selected file does not appear to be a valid ZIP file. Please choose your Instagram data export (.zip).');
+                // Check if it's a .zip.html file (HTML wrapper with base64 ZIP inside)
+                if (isHtmlZip && base64.includes('data-zip')) {
+                    const zipMatch = base64.match(/data-zip="([^"]+)"/);
+                    if (zipMatch && zipMatch[1]) {
+                        base64 = zipMatch[1];
+                    } else {
+                        const scriptMatch = base64.match(/var zipData = "([^"]+)"/);
+                        if (scriptMatch && scriptMatch[1]) {
+                            base64 = scriptMatch[1];
+                        } else {
+                            throw new Error('Could not extract ZIP data from HTML file. Please use a direct .zip file.');
+                        }
+                    }
+                } else {
+                    throw new Error('The selected file does not appear to be a valid ZIP file. Please choose your Instagram data export (.zip).');
+                }
             }
 
             zipInput = base64;
@@ -130,59 +231,72 @@ const pickAndProcess = async () => {
         }
         animateProgress(55);
 
-            setStage('parsing');
-            // Parse followers and following from Instagram export
-            const followers = await extractUserList(zip, [
-                'connections/followers_and_following/followers_1.json',
-                'connections/followers_and_following/followers.json',
-                'followers.json',
-                'followers_1.json',
-                'connections/followers_and_following/followers_1.html',
-                'followers_1.html',
-            ]);
-            animateProgress(70);
+        const extractedDataDir = getExtractedDataDir(fileName);
 
-            const following = await extractUserList(zip, [
-                'connections/followers_and_following/following.json',
-                'following.json',
-                'connections/followers_and_following/following.html',
-                'following.html',
-            ]);
-            animateProgress(85);
+        if (Platform.OS !== 'web') {
+            await clearExtractedData(extractedDataDir);
+            let lastProgress = 55;
+            await extractMediaFiles(zip, extractedDataDir, (current, total) => {
+                const pct = total > 0 ? Math.floor(55 + (current / total) * 15) : 60;
+                if (pct !== lastProgress) {
+                    animateProgress(pct);
+                    lastProgress = pct;
+                }
+            });
+        }
 
-            // 🚀 NEW: Engagement Data (Likes & Comments)
-            const engagement = await extractEngagementData(zip);
-            animateProgress(90);
+        setStage('parsing');
+        const followers = await extractUserList(zip, [
+            'connections/followers_and_following/followers_1.json',
+            'connections/followers_and_following/followers.json',
+            'followers.json',
+            'followers_1.json',
+            'connections/followers_and_following/followers_1.html',
+            'followers_1.html',
+        ]);
+        animateProgress(70);
 
-            // 🚀 NEW: Activity Data (Account History)
-            const activity = await extractActivityData(zip);
-            animateProgress(92);
+        const following = await extractUserList(zip, [
+            'connections/followers_and_following/following.json',
+            'following.json',
+            'connections/followers_and_following/following.html',
+            'following.html',
+        ]);
+        animateProgress(85);
 
-            // 🚀 NEW: Pending Requests
-            const pendingRequests = await extractUserList(zip, [
-                'connections/followers_and_following/pending_follow_requests.json',
-                'pending_follow_requests.json',
-            ]);
-            animateProgress(95);
+        const engagement = await extractEngagementData(zip);
+        animateProgress(90);
 
-            if (!followers.length && !following.length) {
-                // Try to list files for debugging
-                const files = Object.keys(zip.files).slice(0, 20);
-                throw new Error(
-                    `Could not find follower/following data in ZIP.\n\nFiles found:\n${files.join('\n')}\n\nNote: If you exported as HTML, we try to parse that, but JSON is recommended.`
-                );
-            }
+        const activity = await extractActivityData(zip);
+        animateProgress(92);
 
-            const data = {
-                followers,
-                following,
-                pendingRequests,
-                engagement,
-                activity,
-                processedAt: Date.now(),
-            };
+        const pendingRequests = await extractUserList(zip, [
+            'connections/followers_and_following/pending_follow_requests.json',
+            'pending_follow_requests.json',
+        ]);
+        animateProgress(95);
 
-            await AsyncStorage.setItem('instainsight_data', JSON.stringify(data));
+        if (!followers.length && !following.length) {
+            const files = Object.keys(zip.files).slice(0, 20);
+            throw new Error(
+                `Could not find follower/following data in ZIP.\n\nFiles found:\n${files.join('\n')}\n\nNote: If you exported as HTML, we try to parse that, but JSON is recommended.`
+            );
+        }
+
+        const data = {
+            followers,
+            following,
+            pendingRequests,
+            engagement,
+            activity,
+            processedAt: Date.now(),
+        };
+
+        if (Platform.OS !== 'web') {
+            await AsyncStorage.setItem('instainsight_media_path', extractedDataDir);
+        }
+
+        await AsyncStorage.setItem('instainsight_data', JSON.stringify(data));
             animateProgress(100);
 
             setStage('done');
