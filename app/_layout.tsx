@@ -30,6 +30,14 @@ export default function RootLayout() {
                     options={{ title: 'Dashboard', headerBackTitle: 'Back' }}
                 />
                 <Stack.Screen
+                    name="gallery"
+                    options={{ title: 'Media Gallery', headerBackTitle: 'Back' }}
+                />
+                <Stack.Screen
+                    name="stories"
+                    options={{ title: 'Stories', headerBackTitle: 'Back' }}
+                />
+                <Stack.Screen
                     name="userlist"
                     options={{ title: 'User List', headerBackTitle: 'Back' }}
                 />

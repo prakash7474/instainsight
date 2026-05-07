@@ -17,6 +17,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import JSZip from 'jszip';
+import { extractMediaFromZip } from './media/parseMediaFromZip';
 
 type ProcessStage = 'idle' | 'reading' | 'extracting' | 'parsing' | 'done' | 'error';
 
@@ -127,6 +128,9 @@ export default function UploadScreen() {
                 );
             }
 
+            // 🚀 NEW: Media Intelligence (Gallery & Stories)
+            const media = await extractMediaFromZip(zip);
+
             const data = {
                 followers,
                 following,
@@ -137,6 +141,7 @@ export default function UploadScreen() {
             };
 
             await AsyncStorage.setItem('instainsight_data', JSON.stringify(data));
+            await AsyncStorage.setItem('instainsight_media', JSON.stringify(media));
             animateProgress(100);
 
             setStage('done');
