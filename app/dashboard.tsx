@@ -1,23 +1,26 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  Animated,
-  ScrollView,
-  TouchableOpacity,
-  Dimensions,
   ActivityIndicator,
+  Animated,
+  Dimensions,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useInstagramAnalyticsData } from '@/hooks/useInstagramAnalyticsData';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import Svg, { G, Path, Circle, Text as SvgText } from 'react-native-svg';
+import Svg, { Circle, G, Path, Text as SvgText } from 'react-native-svg';
+import { useRouter } from 'expo-router';
 
-import type { ExtractedMedia } from './media/types';
+import type { ExtractedMedia } from '@/utils/mediaTypes';
 
 const { width } = Dimensions.get('window');
+
+type TabKey = 'followers' | 'engagement' | 'activity';
 
 interface InstagramData {
   followers: string[];
@@ -43,22 +46,98 @@ interface Stats {
   pendingRequests: number;
 }
 
-function computeStats(data: InstagramData): Stats {
-  const followerSet = new Set(data.followers);
-  const followingSet = new Set(data.following);
+type StoredPayload = unknown;
 
-  const notFollowingBack = data.following.filter((u) => !followerSet.has(u)).length;
-  const dontFollowBack = data.followers.filter((u) => !followingSet.has(u)).length;
-  const mutuals = data.following.filter((u) => followerSet.has(u)).length;
-  const pendingRequests = data.pendingRequests?.length || 0;
+const STORAGE_KEY_DATA = 'instainsight_data';
+const STORAGE_KEY_MEDIA = 'instainsight_media';
+const STORAGE_KEY_MEDIA_V1 = 'instainsight_media_v1';
+
+function safeStringArray(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const out: string[] = [];
+  for (const v of input) {
+    if (typeof v === 'string') out.push(v);
+  }
+  return out;
+}
+
+function safeNumber(input: unknown, fallback: number): number {
+  return typeof input === 'number' && Number.isFinite(input) ? input : fallback;
+}
+
+function safeInstagramData(input: StoredPayload): InstagramData | null {
+  if (!input || typeof input !== 'object') return null;
+
+  const obj = input as Record<string, unknown>;
+  const followers = safeStringArray(obj.followers);
+  const following = safeStringArray(obj.following);
+
+  // processedAt is required for UI label; if missing/corrupt, treat payload as invalid.
+  const processedAt = safeNumber(obj.processedAt, NaN);
+  if (!Number.isFinite(processedAt)) return null;
+
+  const pendingRequests = obj.pendingRequests ? safeStringArray(obj.pendingRequests) : undefined;
+
+  const engagementRaw = obj.engagement as any;
+  const topLikesRaw = engagementRaw?.topLikes;
+  const topLikes = Array.isArray(topLikesRaw)
+    ? topLikesRaw
+        .map((x: any) => ({
+          user: typeof x?.user === 'string' ? x.user : '',
+          count: safeNumber(x?.count, 0),
+        }))
+        .filter((x: any) => x.user)
+    : [];
+
+  const engagement = engagementRaw
+    ? {
+        topLikes,
+        totalLikes: safeNumber(engagementRaw.totalLikes, 0),
+        totalComments: safeNumber(engagementRaw.totalComments, 0),
+      }
+    : undefined;
+
+  const activityRaw = obj.activity as any;
+  const loginHistory = Array.isArray(activityRaw?.loginHistory)
+    ? activityRaw.loginHistory
+        .map((ts: unknown) => (typeof ts === 'number' && Number.isFinite(ts) ? ts : null))
+        .filter((x: number | null) => x !== null) as number[]
+    : undefined;
+
+  const activity = loginHistory ? { loginHistory } : undefined;
 
   return {
-    totalFollowers: data.followers.length,
-    totalFollowing: data.following.length,
+    followers,
+    following,
+    pendingRequests,
+    engagement,
+    activity,
+    processedAt,
+  };
+}
+
+function computeStatsSafe(data: InstagramData | null): Stats | null {
+  if (!data) return null;
+
+  // Never assume arrays exist.
+  const followers = Array.isArray(data.followers) ? data.followers : [];
+  const following = Array.isArray(data.following) ? data.following : [];
+  const pendingRequests = Array.isArray(data.pendingRequests) ? data.pendingRequests : [];
+
+  const followerSet = new Set(followers);
+  const followingSet = new Set(following);
+
+  const mutuals = following.filter((u) => followerSet.has(u)).length;
+  const notFollowingBack = following.filter((u) => !followerSet.has(u)).length;
+  const dontFollowBack = followers.filter((u) => !followingSet.has(u)).length;
+
+  return {
+    totalFollowers: followers.length,
+    totalFollowing: following.length,
     notFollowingBack,
     dontFollowBack,
     mutuals,
-    pendingRequests,
+    pendingRequests: pendingRequests.length,
   };
 }
 
@@ -67,13 +146,14 @@ function PieChart({ data }: { data: { value: number; color: string; label: strin
   const r = size / 2 - 20;
   const cx = size / 2;
   const cy = size / 2;
-  const total = data.reduce((s, d) => s + d.value, 0) || 1;
+
+  const total = data.reduce((s, d) => s + (Number.isFinite(d.value) ? d.value : 0), 0) || 1;
 
   let startAngle = -Math.PI / 2;
   const slices = data
-    .filter((d) => d.value > 0)
+    .filter((d) => (Number.isFinite(d.value) ? d.value : 0) > 0)
     .map((d) => {
-      const angle = (d.value / total) * 2 * Math.PI;
+      const angle = ((d.value || 0) / total) * 2 * Math.PI;
       const endAngle = startAngle + angle;
       const x1 = cx + r * Math.cos(startAngle);
       const y1 = cy + r * Math.sin(startAngle);
@@ -88,7 +168,7 @@ function PieChart({ data }: { data: { value: number; color: string; label: strin
   return (
     <Svg width={size} height={size}>
       {slices.map((s, i) => (
-        <Path key={i} d={s.path} fill={s.color} opacity={0.9} />
+        <Path key={i} d={(s as any).path} fill={s.color} opacity={0.9} />
       ))}
       <Circle cx={cx} cy={cy} r={r * 0.45} fill="#13131F" />
     </Svg>
@@ -117,10 +197,15 @@ function StatCard({
       tension: 80,
       friction: 6,
     }).start();
-  }, []);
+  }, [scaleAnim]);
 
   return (
-    <TouchableOpacity onPress={onPress} activeOpacity={onPress ? 0.75 : 1} style={{ flex: 1 }}>
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={onPress ? 0.75 : 1}
+      style={{ flex: 1 }}
+      disabled={!onPress}
+    >
       <Animated.View
         style={[
           styles.statCard,
@@ -130,7 +215,7 @@ function StatCard({
         <View style={[styles.statIconWrap, { backgroundColor: color + '22' }]}>
           <Ionicons name={icon as any} size={22} color={color} />
         </View>
-        <Text style={[styles.statValue, { color }]}>{value.toLocaleString()}</Text>
+        <Text style={[styles.statValue, { color }]}>{(value ?? 0).toLocaleString()}</Text>
         <Text style={styles.statLabel}>{label}</Text>
       </Animated.View>
     </TouchableOpacity>
@@ -145,7 +230,8 @@ function BarChart({ stats }: { stats: Stats }) {
     { label: 'Not Back', value: stats.notFollowingBack, color: '#FF5252' },
     { label: "Don't Back", value: stats.dontFollowBack, color: '#FFC107' },
   ];
-  const maxVal = Math.max(...bars.map((b) => b.value), 1);
+
+  const maxVal = Math.max(...bars.map((b) => (Number.isFinite(b.value) ? b.value : 0)), 1);
   const chartWidth = width - 80;
   const chartHeight = 140;
   const barWidth = (chartWidth / bars.length) * 0.55;
@@ -155,7 +241,7 @@ function BarChart({ stats }: { stats: Stats }) {
     <View style={styles.barChartWrap}>
       <Svg width={chartWidth} height={chartHeight + 30}>
         {bars.map((b, i) => {
-          const barH = (b.value / maxVal) * chartHeight;
+          const barH = (((Number.isFinite(b.value) ? b.value : 0) / maxVal) * chartHeight) || 0;
           const x = i * gapWidth + (gapWidth - barWidth) / 2;
           const y = chartHeight - barH;
           return (
@@ -182,11 +268,23 @@ function BarChart({ stats }: { stats: Stats }) {
   );
 }
 
-function StatPill({ label, value, color }: { label: string; value: number; color: string }) {
+function ErrorState({
+  title,
+  subtitle,
+  onReset,
+}: {
+  title: string;
+  subtitle: string;
+  onReset: () => void;
+}) {
   return (
-    <View style={[styles.statPill, { borderColor: color + '55' }]}>
-      <Text style={[styles.statPillValue, { color }]}>{value.toLocaleString()}</Text>
-      <Text style={styles.statPillLabel}>{label}</Text>
+    <View style={[styles.container, styles.center]}>
+      <Ionicons name="alert-circle-outline" size={54} color="#FF5252" />
+      <Text style={styles.noDataTitle}>{title}</Text>
+      <Text style={styles.noDataSub}>{subtitle}</Text>
+      <TouchableOpacity style={styles.importBtn} onPress={onReset}>
+        <Text style={styles.importBtnText}>Reset Stored Data</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -194,83 +292,130 @@ function StatPill({ label, value, color }: { label: string; value: number; color
 export default function DashboardScreen() {
   const router = useRouter();
 
-  const [data, setData] = useState<InstagramData | null>(null);
-  const [stats, setStats] = useState<Stats | null>(null);
-
-  const [media, setMedia] = useState<ExtractedMedia | null>(null);
+  // Shared hook not used yet; dashboard keeps its own defensive loading to avoid half-migration issues.
+  void useInstagramAnalyticsData;
 
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'followers' | 'engagement' | 'activity'>('followers');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [data, setData] = useState<InstagramData | null>(null);
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [media, setMedia] = useState<ExtractedMedia | null>(null);
+
+  const [activeTab, setActiveTab] = useState<TabKey>('followers');
+
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
-  const openGallery = () => router.push('/gallery');
-  const openStories = () => router.push('/stories');
-
   useEffect(() => {
-    loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const loadData = async () => {
-    const stored = await AsyncStorage.getItem('instainsight_data');
-    if (stored) {
-      const parsed: InstagramData = JSON.parse(stored);
-      setData(parsed);
-      setStats(computeStats(parsed));
-    }
-
-    const storedMedia = await AsyncStorage.getItem('instainsight_media_v1');
-    if (storedMedia) {
-      try {
-        setMedia(JSON.parse(storedMedia) as ExtractedMedia);
-      } catch {
-        setMedia(null);
-      }
-    }
-
-    setLoading(false);
+    if (loading) return;
     Animated.timing(fadeAnim, {
       toValue: 1,
       duration: 600,
       useNativeDriver: true,
     }).start();
-  };
+  }, [loading]);
 
   const clearData = async () => {
-    await AsyncStorage.removeItem('instainsight_data');
-    await AsyncStorage.removeItem('instainsight_media_v1');
+    try {
+      await AsyncStorage.removeItem(STORAGE_KEY_DATA);
+      await AsyncStorage.removeItem(STORAGE_KEY_MEDIA_V1);
+      await AsyncStorage.removeItem(STORAGE_KEY_MEDIA);
+    } catch {
+      // ignore
+    }
     router.replace('/');
   };
 
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+      try {
+        setLoading(true);
+        setErrorMsg(null);
+
+        const [stored, storedMedia] = await Promise.all([
+          AsyncStorage.getItem(STORAGE_KEY_DATA),
+          AsyncStorage.getItem(STORAGE_KEY_MEDIA),
+        ]);
+
+        if (stored) {
+          try {
+            const parsed = JSON.parse(stored) as StoredPayload;
+            const normalized = safeInstagramData(parsed);
+
+            if (!normalized) {
+              // Corrupted or missing shape: reset to prevent crash loops.
+              setErrorMsg('Stored Instagram data is corrupted.');
+            } else {
+              if (!mounted) return;
+              setData(normalized);
+              setStats(computeStatsSafe(normalized));
+            }
+          } catch {
+            setErrorMsg('Stored Instagram data could not be parsed.');
+          }
+        }
+
+        if (storedMedia) {
+          try {
+            const parsedMedia = JSON.parse(storedMedia) as ExtractedMedia;
+            if (mounted) setMedia(parsedMedia);
+          } catch {
+            if (mounted) setMedia(null);
+          }
+        }
+
+        if (mounted) {
+          setLoading(false);
+          Animated.timing(fadeAnim, {
+            toValue: 1,
+            duration: 600,
+            useNativeDriver: true,
+          }).start();
+        }
+      } catch (e: any) {
+        if (!mounted) return;
+        setLoading(false);
+        setErrorMsg(e?.message || 'Failed to load dashboard data.');
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [fadeAnim]);
+
+  // Derived UI labels: safe and only use when data exists.
   const processedDate = useMemo(() => {
-    if (!data) return '';
-    return new Date(data.processedAt).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+    if (!data) return '—';
+    const d = new Date(data.processedAt);
+    return Number.isFinite(d.getTime())
+      ? d.toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      : '—';
   }, [data]);
 
-  const mediaCounts = useMemo(() => {
-    const archivedCount = media?.meta.archivedCount ?? 0;
-    const storiesCount = media?.meta.storiesCount ?? 0;
-    const totalPhotos = media?.meta.totalPhotos ?? 0;
-    return { archivedCount, storiesCount, totalPhotos };
-  }, [media]);
-
   const mostActiveMonthLabel = useMemo(() => {
-    // best-effort: pick month with most total images across archived+stories
     if (!media) return '—';
 
+    const archived = Array.isArray((media as any)?.archived) ? (media as any).archived : [];
+    const stories = Array.isArray((media as any)?.stories) ? (media as any).stories : [];
+
     const map = new Map<string, number>();
-    const add = (m: { label: string; images: unknown[] }) => {
-      map.set(m.label, (map.get(m.label) ?? 0) + (m.images?.length ?? 0));
+    const add = (m: any) => {
+      const label = typeof m?.label === 'string' ? m.label : null;
+      const images = Array.isArray(m?.images) ? m.images : [];
+      if (!label) return;
+      map.set(label, (map.get(label) ?? 0) + images.length);
     };
 
-    media.archived.forEach((m) => add(m as any));
-    media.stories.forEach((m) => add(m as any));
+    archived.forEach(add);
+    stories.forEach(add);
 
     let bestLabel = '—';
     let best = -1;
@@ -283,6 +428,15 @@ export default function DashboardScreen() {
     return bestLabel;
   }, [media]);
 
+  const pieData = useMemo(() => {
+    if (!stats) return [];
+    return [
+      { label: 'Mutuals', value: stats.mutuals, color: '#00BCD4' },
+      { label: 'Not Following Back', value: stats.notFollowingBack, color: '#FF5252' },
+      { label: "Don't Follow Back", value: stats.dontFollowBack, color: '#FFC107' },
+    ];
+  }, [stats]);
+
   if (loading) {
     return (
       <View style={[styles.container, styles.center]}>
@@ -291,6 +445,11 @@ export default function DashboardScreen() {
     );
   }
 
+  if (errorMsg) {
+    return <ErrorState title="Dashboard Error" subtitle={errorMsg} onReset={clearData} />;
+  }
+
+  // Prevent render until normalized data + stats exist.
   if (!data || !stats) {
     return (
       <View style={[styles.container, styles.center]}>
@@ -304,15 +463,15 @@ export default function DashboardScreen() {
     );
   }
 
-  const pieData = [
-    { label: 'Mutuals', value: stats.mutuals, color: '#00BCD4' },
-    { label: 'Not Following Back', value: stats.notFollowingBack, color: '#FF5252' },
-    { label: "Don't Follow Back", value: stats.dontFollowBack, color: '#FFC107' },
-  ];
+  const openGallery = () => router.push('/gallery');
+  const openStories = () => router.push('/stories');
 
   return (
     <View style={styles.container}>
-      <LinearGradient colors={['#0F0F1A', '#1A0A2E', '#0F0F1A']} style={StyleSheet.absoluteFillObject} />
+      <LinearGradient
+        colors={['#0F0F1A', '#1A0A2E', '#0F0F1A']}
+        style={StyleSheet.absoluteFillObject}
+      />
 
       <View style={styles.tabBar}>
         {(['followers', 'engagement', 'activity'] as const).map((tab) => (
@@ -336,7 +495,11 @@ export default function DashboardScreen() {
         <View style={styles.header}>
           <View>
             <Text style={styles.headerTitle}>
-              {activeTab === 'followers' ? 'Followers' : activeTab === 'engagement' ? 'Engagement' : 'Activity'}
+              {activeTab === 'followers'
+                ? 'Followers'
+                : activeTab === 'engagement'
+                  ? 'Engagement'
+                  : 'Activity'}
             </Text>
             <Text style={styles.headerSub}>Updated {processedDate}</Text>
           </View>
@@ -375,7 +538,6 @@ export default function DashboardScreen() {
             </View>
           </View>
 
-
           <View style={styles.mediaActionsRow}>
             <TouchableOpacity
               style={[styles.mediaBtn, { borderColor: '#E040FB55' }]}
@@ -397,19 +559,28 @@ export default function DashboardScreen() {
           </View>
         </View>
 
+        {/* Followers tab */}
         {activeTab === 'followers' && (
           <>
             <View style={styles.statsGrid}>
               <StatCard label="Followers" value={stats.totalFollowers} icon="people" color="#E040FB" />
-              <StatCard label="Following" value={stats.totalFollowing} icon="person-add" color="#7C4DFF" />
+              <StatCard
+                label="Following"
+                value={stats.totalFollowing}
+                icon="person-add"
+                color="#7C4DFF"
+              />
             </View>
+
             <View style={styles.statsGrid}>
               <StatCard
                 label="Not Following"
                 value={stats.notFollowingBack}
                 icon="person-remove"
                 color="#FF5252"
-                onPress={() => router.push({ pathname: '/userlist', params: { type: 'notfollowingback' } })}
+                onPress={() =>
+                  router.push({ pathname: '/userlist', params: { type: 'notfollowingback' } })
+                }
               />
               <StatCard
                 label="Mutuals"
@@ -419,6 +590,7 @@ export default function DashboardScreen() {
                 onPress={() => router.push({ pathname: '/userlist', params: { type: 'mutuals' } })}
               />
             </View>
+
             <View style={styles.statsGrid}>
               <StatCard
                 label="Pending"
@@ -429,6 +601,7 @@ export default function DashboardScreen() {
               />
               <View style={{ flex: 1 }} />
             </View>
+
             <View style={styles.chartCard}>
               <Text style={styles.chartTitle}>Relationship Distribution</Text>
               <PieChart data={pieData} />
@@ -443,6 +616,7 @@ export default function DashboardScreen() {
                 ))}
               </View>
             </View>
+
             <View style={styles.chartCard}>
               <Text style={styles.chartTitle}>Overview Comparison</Text>
               <BarChart stats={stats} />
@@ -450,18 +624,19 @@ export default function DashboardScreen() {
           </>
         )}
 
+        {/* Engagement tab */}
         {activeTab === 'engagement' && (
           <View style={styles.fadeContainer}>
             <View style={styles.statsGrid}>
               <StatCard
                 label="Total Liked Posts"
-                value={data.engagement?.totalLikes || 0}
+                value={data.engagement?.totalLikes ?? 0}
                 icon="heart"
                 color="#E91E63"
               />
               <StatCard
                 label="Total Comments"
-                value={data.engagement?.totalComments || 0}
+                value={data.engagement?.totalComments ?? 0}
                 icon="chatbubble"
                 color="#2196F3"
               />
@@ -470,7 +645,8 @@ export default function DashboardScreen() {
             <View style={styles.actionsCard}>
               <Text style={styles.chartTitle}>🏆 Top Interacted Users</Text>
               <Text style={styles.cardSub}>Based on your likes and comments</Text>
-              {data.engagement?.topLikes?.length ? (
+
+              {Array.isArray(data.engagement?.topLikes) && data.engagement?.topLikes?.length ? (
                 data.engagement.topLikes.map((u, i) => (
                   <View key={i} style={styles.actionRow}>
                     <Text style={styles.rankText}>#{i + 1}</Text>
@@ -485,18 +661,20 @@ export default function DashboardScreen() {
           </View>
         )}
 
+        {/* Activity tab */}
         {activeTab === 'activity' && (
           <View style={styles.fadeContainer}>
             <View style={styles.chartCard}>
               <Ionicons name="time" size={40} color="#00E676" style={{ marginBottom: 12 }} />
               <Text style={styles.chartTitle}>Usage Summary</Text>
-              <Text style={styles.statValue}>{data.activity?.loginHistory?.length || 0}</Text>
+              <Text style={styles.statValue}>{data.activity?.loginHistory?.length ?? 0}</Text>
               <Text style={styles.statLabel}>Total App Logins Recorded</Text>
             </View>
 
             <View style={styles.actionsCard}>
               <Text style={styles.chartTitle}>📅 Activity Timeline</Text>
               <Text style={styles.cardSub}>Account interactions over time (last 10 events)</Text>
+
               {data.activity?.loginHistory?.length ? (
                 data.activity.loginHistory.slice(0, 10).map((ts, i) => (
                   <View key={i} style={styles.actionRow}>
@@ -574,7 +752,14 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   mediaHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 14 },
-  mediaIconWrap: { width: 44, height: 44, borderRadius: 16, borderWidth: 1, borderColor: '#E040FB33', overflow: 'hidden' },
+  mediaIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E040FB33',
+    overflow: 'hidden',
+  },
   mediaIconGradient: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   mediaTitle: { color: '#fff', fontSize: 18, fontWeight: '800' },
   mediaSubtitle: { color: '#888', fontSize: 12, marginTop: 3 },
@@ -610,7 +795,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
-  statIconWrap: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  statIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   statValue: { fontSize: 22, fontWeight: '800', color: '#fff' },
   statLabel: { fontSize: 11, color: '#888', textAlign: 'center' },
 
@@ -624,7 +815,13 @@ const styles = StyleSheet.create({
     borderColor: '#2A2A40',
     alignItems: 'center',
   },
-  chartTitle: { fontSize: 16, fontWeight: '700', color: '#fff', marginBottom: 16, alignSelf: 'flex-start' },
+  chartTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+    marginBottom: 16,
+    alignSelf: 'flex-start',
+  },
   legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 16, justifyContent: 'center' },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   legendDot: { width: 10, height: 10, borderRadius: 5 },
@@ -689,9 +886,5 @@ const styles = StyleSheet.create({
 
   cardSub: { color: '#888', fontSize: 12, marginTop: -12, marginBottom: 16 },
   emptyNote: { color: '#666', fontSize: 13, textAlign: 'center', marginVertical: 20 },
-
-  // StatPill
-  statPill: { borderWidth: 1, borderRadius: 18, padding: 14, backgroundColor: '#0F0F1A', flex: 1 },
-  statPillValue: { fontSize: 18, fontWeight: '900' },
-  statPillLabel: { color: '#888', fontSize: 11, marginTop: 6, fontWeight: '700' },
 });
+

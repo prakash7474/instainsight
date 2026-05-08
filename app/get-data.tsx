@@ -47,6 +47,7 @@ export default function BrowserScreen() {
         step: 'Login',
         progress: 0,
     });
+    const [showExportHelp, setShowExportHelp] = useState(true);
 
     const updateGuide = (url: string, pageText: string = '', cookies: string = '') => {
         const text = pageText.toLowerCase();
@@ -66,7 +67,7 @@ export default function BrowserScreen() {
                 step: 'Login',
                 progress: 0.1,
             };
-            hasRedirectedRef.current = false; // Allow redirect again if they logs out and in
+            hasRedirectedRef.current = false;
         }
         // 2. LOGIN SUCCESS DETECTION (REDIRECT PHASE)
         else if (isLoggedIn && !lowUrl.includes('accountscenter')) {
@@ -77,7 +78,6 @@ export default function BrowserScreen() {
                 progress: 0.3,
             };
 
-            // AUTO REDIRECT (ONLY ONCE)
             if (!hasRedirectedRef.current) {
                 hasRedirectedRef.current = true;
                 setTimeout(() => {
@@ -118,12 +118,16 @@ export default function BrowserScreen() {
                     progress: 0.8,
                 };
             } else {
+                const isFirstExport = guide.step !== 'Export';
                 newState = {
                     message: "📤 Tap 'Create Export'",
                     icon: 'paper-plane-outline',
                     step: 'Export',
                     progress: 0.7,
                 };
+                if (isFirstExport) {
+                    setShowExportHelp(true);
+                }
             }
         }
         // FALLBACK
@@ -231,14 +235,23 @@ export default function BrowserScreen() {
             </View>
 
             {/* Export Configuration Help */}
-            {guide.step === 'Export' && (
+            {guide.step === 'Export' && showExportHelp && (
                 <View style={styles.exportHelp}>
-                    <Text style={styles.exportHelpTitle}>💡 Recommended Settings:</Text>
-                    <Text style={styles.exportHelpText}>• Select "Export to device"</Text>
-                    <Text style={styles.exportHelpText}>• Enter email if asked</Text>
-                    <Text style={styles.exportHelpText}>• Date Range: Last 3 or 6 months</Text>
-                    <Text style={styles.exportHelpText}>• Select: Followers & Following, Likes</Text>
-                    <Text style={styles.exportHelpText}>• Format: JSON</Text>
+                    <View style={styles.exportHelpHeader}>
+                        <Text style={styles.exportHelpTitle}>Recommended Settings</Text>
+                        <TouchableOpacity 
+                            style={styles.closeBtn}
+                            onPress={() => setShowExportHelp(false)}
+                        >
+                            <Ionicons name="close" size={18} color="#888" />
+                        </TouchableOpacity>
+                    </View>
+                    <View style={styles.exportHelpContent}>
+                        <Text style={styles.exportHelpText}>• Export to device</Text>
+                        <Text style={styles.exportHelpText}>• Date Range: Last 3-6 months</Text>
+                        <Text style={styles.exportHelpText}>• Include: Followers & Following, Likes</Text>
+                        <Text style={styles.exportHelpText}>• Format: JSON</Text>
+                    </View>
                 </View>
             )}
 
@@ -453,14 +466,27 @@ const styles = StyleSheet.create({
         zIndex: 50,
     },
     exportHelpTitle: {
-        color: '#E040FB',
+        color: '#FFF',
         fontWeight: '700',
         fontSize: 14,
-        marginBottom: 8,
+    },
+    exportHelpHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 10,
+    },
+    exportHelpContent: {
+        gap: 6,
     },
     exportHelpText: {
-        color: '#CCC',
+        color: '#AAA',
         fontSize: 12,
-        marginBottom: 4,
+        lineHeight: 18,
+    },
+    closeBtn: {
+        padding: 4,
+        borderRadius: 12,
+        backgroundColor: '#FFFFFF10',
     },
 });

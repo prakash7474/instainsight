@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import type { MediaStore } from './media/types';
+import type { MediaStore } from '@/utils/mediaTypes';
 
 const { width } = Dimensions.get('window');
 const COLS = 3;
