@@ -1,11 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView, Image, FlatList, Dimensions, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView, FlatList, Dimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import type { ViewerItem } from '@/utils/viewerUtils';
+import { buildViewerItems } from '@/utils/viewerUtils';
 import type { MediaStore } from '@/utils/mediaTypes';
+import { GalleryModal } from '@/components/GalleryModal';
+import { MediaCard } from '@/components/MediaCard';
 
 const { width } = Dimensions.get('window');
 const COLS = 3;
@@ -23,6 +27,17 @@ export default function GalleryScreen() {
 
   const [media, setMedia] = useState<MediaStore | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const [modalVisible, setModalVisible] = useState(false);
+  const [modalItems, setModalItems] = useState<ViewerItem[]>([]);
+  const [modalInitialIndex, setModalInitialIndex] = useState(0);
+
+  const openGalleryItem = (monthKey: string, indexInMonth: number) => {
+    const uris = media?.posts?.[monthKey] ?? [];
+    setModalItems(buildViewerItems(uris));
+    setModalInitialIndex(Math.max(0, Math.min(indexInMonth, uris.length - 1)));
+    setModalVisible(true);
+  };
 
   const normalizeMediaStore = (raw: any): MediaStore => {
     // Backward compatibility:
@@ -143,12 +158,12 @@ export default function GalleryScreen() {
                       numColumns={COLS}
                       scrollEnabled={false}
                       columnWrapperStyle={{ gap: GAP }}
-                      renderItem={({ item: uri }) => (
+                      renderItem={({ item: uri, index }) => (
                         <View style={{ width: THUMB, marginBottom: GAP }}>
-                          <Image
-                            source={{ uri }}
-                            style={styles.thumb}
-                            resizeMode="cover"
+                          <MediaCard
+                            uri={uri}
+                            size={THUMB}
+                            onPress={() => openGalleryItem(monthKey, index)}
                           />
                         </View>
                       )}
@@ -158,6 +173,13 @@ export default function GalleryScreen() {
               }}
             />
           )}
+
+          <GalleryModal
+            visible={modalVisible}
+            items={modalItems}
+            initialIndex={modalInitialIndex}
+            onClose={() => setModalVisible(false)}
+          />
 
           <TouchableOpacity style={styles.primaryBtn} onPress={() => router.push('/stories')}>
             <Ionicons name="sparkles" size={18} color="#0F0F1A" />

@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 import { MediaStore } from './mediaTypes';
 
 const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp']);
-const VIDEO_EXT = new Set(['.mp4', '.mov']);
+const VIDEO_EXT = new Set(['.mp4', '.mov', '.webm']);
 
 function normPath(p: string) {
   return (p || '').replace(/\\/g, '/');
@@ -47,6 +47,7 @@ function mimeFromPath(path: string) {
   if (ext === 'webp') return 'image/webp';
   if (ext === 'mp4') return 'video/mp4';
   if (ext === 'mov') return 'video/quicktime';
+  if (ext === 'webm') return 'video/webm';
   return 'application/octet-stream';
 }
 

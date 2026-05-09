@@ -32,7 +32,8 @@
       "expo-router",
       "expo-document-picker",
       "expo-asset",
-      "expo-font"
+      "expo-font",
+      "expo-av"
     ],
     "experiments": {
       "typedRoutes": true
