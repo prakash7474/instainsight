@@ -2,6 +2,7 @@ import JSZip from 'jszip';
 import { Platform } from 'react-native';
 import { MediaStore } from './mediaTypes';
 
+
 const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp']);
 const VIDEO_EXT = new Set(['.mp4', '.mov', '.webm']);
 
@@ -70,80 +71,122 @@ async function getFileUri(zip: JSZip, path: string) {
 export async function extractMediaFromZip(zip: JSZip): Promise<MediaStore> {
   const allFiles = Object.keys(zip.files);
 
-  const storyPaths = allFiles.filter(
-    (f) =>
-      normPath(f).includes('media/stories/') &&
-      isSupportedMedia(f) &&
-      !zip.files[f]?.dir
+  console.log('[InstaInsight][MediaExtraction] 📁 TOTAL FILES:', allFiles.length);
+  console.log(
+    '[InstaInsight][MediaExtraction] 📁 ZIP FILE SAMPLE (first 50):',
+    allFiles.slice(0, 50)
   );
+
+  // Gallery posts: keep URI-based extraction for now.
   const postPaths = allFiles.filter(
     (f) =>
       normPath(f).includes('media/archived_posts/') &&
-      // required: filter gallery posts (images). Keep videos out for gallery to avoid broken Image rendering.
       isSupportedImageExt(f) &&
       !zip.files[f]?.dir
   );
 
-  let storiesGrouped: MediaStore['stories'] = {};
   let postsGrouped: MediaStore['posts'] = {};
+  let postsUrisCount = 0;
 
-  let storyUrisCount = 0;
-  let postUrisCount = 0;
+  const dedupePosts = new Set<string>();
+  const CONCURRENCY = 6;
 
-  // Deduplicate by path+month
-  const dedupe = new Set<string>();
+  type PostExtracted = { ym: string; uri: string; key: string };
 
-  // Stories: images + videos
-  for (const p of storyPaths) {
+  async function extractPostsIntoBatches(paths: string[]) {
+    for (let i = 0; i < paths.length; i += CONCURRENCY) {
+      const batch = paths.slice(i, i + CONCURRENCY);
+
+      const results = await Promise.all(
+        batch.map(async (p): Promise<PostExtracted | null> => {
+          const ym = extractYearMonth(p);
+          if (!ym) return null;
+
+          const uri = await getFileUri(zip, p);
+          if (!uri) return null;
+
+          const key = `posts:${ym}:${p}`;
+          if (dedupePosts.has(key)) return null;
+          dedupePosts.add(key);
+
+          return { ym, uri, key };
+        })
+      );
+
+      for (const r of results) {
+        if (!r) continue;
+        postsGrouped[r.ym] = postsGrouped[r.ym] || [];
+        postsGrouped[r.ym].push(r.uri);
+        postsUrisCount++;
+      }
+    }
+  }
+
+  await extractPostsIntoBatches(postPaths);
+
+  // Stories: metadata-only (no blob/object URLs, no data URIs).
+  // store: monthKey -> [zipPath], and zipPath -> type.
+  const storyMetaPathsByMonth: Record<string, string[]> = {};
+  const storyTypesByPath: Record<string, 'image' | 'video'> = {};
+
+  const storyCandidatePaths = allFiles.filter((f) => {
+    const filePath = normPath(f);
+    if (!filePath.toLowerCase().includes('media/stories/')) return false;
+    if (zip.files[f]?.dir) return false;
+    return isSupportedMedia(f);
+  });
+
+  console.log(
+    '[InstaInsight][MediaExtraction] 📂 STORY FILE CANDIDATE COUNT:',
+    storyCandidatePaths.length
+  );
+
+  const dedupeStories = new Set<string>();
+
+  for (const p of storyCandidatePaths) {
     const ym = extractYearMonth(p);
     if (!ym) continue;
 
-    const uri = await getFileUri(zip, p);
-    if (!uri) continue;
-
+    const type: 'image' | 'video' = isSupportedVideoExt(p) ? 'video' : 'image';
     const key = `stories:${ym}:${p}`;
-    if (dedupe.has(key)) continue;
-    dedupe.add(key);
+    if (dedupeStories.has(key)) continue;
+    dedupeStories.add(key);
 
-    storiesGrouped[ym] = storiesGrouped[ym] || [];
-    storiesGrouped[ym].push(uri);
-    storyUrisCount++;
+    storyMetaPathsByMonth[ym] = storyMetaPathsByMonth[ym] || [];
+    storyMetaPathsByMonth[ym].push(p);
+    storyTypesByPath[p] = type;
   }
 
-  // Posts (gallery): images only (jpg/jpeg/png/webp)
-  for (const p of postPaths) {
-    const ym = extractYearMonth(p);
-    if (!ym) continue;
+  const storyCount = Object.values(storyMetaPathsByMonth).reduce((a, b) => a + (b?.length ?? 0), 0);
 
-    const uri = await getFileUri(zip, p);
-    if (!uri) continue;
-
-    const key = `posts:${ym}:${p}`;
-    if (dedupe.has(key)) continue;
-    dedupe.add(key);
-
-    postsGrouped[ym] = postsGrouped[ym] || [];
-    postsGrouped[ym].push(uri);
-    postUrisCount++;
-  }
-
-  console.log('[InstaInsight][MediaExtraction] Story files:', storyPaths.length);
+  console.log(
+    '[InstaInsight][MediaExtraction] ✅ Stories grouped months:',
+    Object.keys(storyMetaPathsByMonth)
+  );
+  console.log(
+    '[InstaInsight][MediaExtraction] ✅ Stories total paths:',
+    storyCount
+  );
   console.log('[InstaInsight][MediaExtraction] Post files:', postPaths.length);
-  console.log(
-    '[InstaInsight][MediaExtraction] Grouped stories months:',
-    Object.keys(storiesGrouped)
-  );
-  console.log(
-    '[InstaInsight][MediaExtraction] Grouped posts months:',
-    Object.keys(postsGrouped)
-  );
-  console.log('[InstaInsight][MediaExtraction] Story URIs:', storyUrisCount);
-  console.log('[InstaInsight][MediaExtraction] Post URIs:', postUrisCount);
+  console.log('[InstaInsight][MediaExtraction] Post grouped months:', Object.keys(postsGrouped));
+  console.log('[InstaInsight][MediaExtraction] Post URIs:', postsUrisCount);
+
+  // Persist legacy `stories` shape (month -> [string]) but keep it metadata-only.
+  const storiesLegacy: MediaStore['stories'] = storyMetaPathsByMonth as unknown as MediaStore['stories'];
 
   return {
     posts: postsGrouped,
-    stories: storiesGrouped,
+    stories: storiesLegacy,
     processedAt: Date.now(),
+    meta: {
+      postsCount: postsUrisCount,
+      storiesPathsCount: storyCount,
+      storiesPathsByMonth: storyMetaPathsByMonth,
+      storiesTypesByPath: storyTypesByPath,
+    } as any,
   };
 }
+
+
+
 

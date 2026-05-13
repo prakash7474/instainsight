@@ -18,6 +18,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import JSZip from 'jszip';
 import { extractMediaFromZip } from '@/utils/parseMediaFromZip';
+import { extractStories, setActiveZip } from '@/utils/stories';
+import { buildAnalytics, parsePendingFollowRequestsHtml, uniqueUsers, type User } from '@/utils/instagramAnalyticsUtils';
+
+
 
 type ProcessStage = 'idle' | 'reading' | 'extracting' | 'parsing' | 'done' | 'error';
 
@@ -115,7 +119,7 @@ export default function UploadScreen() {
 
             // 🚀 NEW: Pending Requests
             const pendingRequests = await extractUserList(zip, [
-                'connections/followers_and_following/pending_follow_requests.json',
+                'connections/followers_and_following/pending_follow_requests.html',
                 'pending_follow_requests.json',
             ]);
             animateProgress(95);
@@ -131,6 +135,12 @@ export default function UploadScreen() {
             // 🚀 NEW: Media Intelligence (Gallery & Stories)
             const media = await extractMediaFromZip(zip);
 
+            // NEW: Extract stories metadata (paths, types, months) - no URIs
+            const storiesData = extractStories(zip);
+
+            // Cache ZIP for Stories screen URI generation
+            setActiveZip(zip, base64);
+
             const data = {
                 followers,
                 following,
@@ -142,7 +152,25 @@ export default function UploadScreen() {
 
             await AsyncStorage.setItem('instainsight_data', JSON.stringify(data));
             await AsyncStorage.setItem('instainsight_media', JSON.stringify(media));
+
+            // Save stories metadata (paths, types, months) - no URIs
+            await AsyncStorage.setItem(
+                'instainsight_stories',
+                JSON.stringify({ stories: storiesData, processedAt: Date.now() })
+            );
+
+            // Persist ZIP base64 as fallback for app restart
+            try {
+                await AsyncStorage.setItem(
+                    'instainsight_zip_base64',
+                    JSON.stringify({ base64, processedAt: Date.now() })
+                );
+            } catch (e) {
+                console.warn('[InstaInsight][Upload] Could not persist ZIP base64 (quota likely exceeded). Stories will work during this session only.', e);
+            }
+
             animateProgress(100);
+
 
             setStage('done');
             setTimeout(() => router.push('/dashboard'), 1200);
@@ -192,7 +220,7 @@ export default function UploadScreen() {
 
         try {
             // Parse Likes (Users you liked most)
-            const likesPaths = ['likes/liked_posts.json', 'likes.json'];
+            const likesPaths = ['likes/liked_posts.html', 'likes.json'];
             const likesContent = await getZipFileContent(zip, likesPaths);
             if (likesContent) {
                 const likesData = JSON.parse(likesContent);
@@ -215,7 +243,7 @@ export default function UploadScreen() {
             }
 
             // Parse Comments
-            const commsPaths = ['comments/post_comments.json', 'comments.json'];
+            const commsPaths = ['comments/post_comments.html', 'comments.json'];
             const commsContent = await getZipFileContent(zip, commsPaths);
             if (commsContent) {
                 const commsData = JSON.parse(commsContent);
@@ -234,7 +262,7 @@ export default function UploadScreen() {
         };
 
         try {
-            const path = ['account_history/login_history.json', 'login_history.json'];
+            const path = ['account_history/login_history.html', 'login_history.html'];
             const content = await getZipFileContent(zip, path);
             if (content) {
                 const data = JSON.parse(content);

@@ -25,8 +25,6 @@ import { Ionicons } from '@expo/vector-icons';
 import type { ViewerItem } from '@/utils/viewerUtils';
 import { inferViewerKind } from '@/utils/viewerUtils';
 
-// const { height } = Dimensions.get('window');
-
 const IMAGE_DURATION_MS = 5000;
 
 export type StoryViewerProps = {
@@ -36,117 +34,81 @@ export type StoryViewerProps = {
 };
 
 export function StoryViewer({ items, initialIndex, onClose }: StoryViewerProps) {
-  const safeItems = Array.isArray(items) ? items : [];
-
+  const safeItems = items ?? [];
   const [index, setIndex] = useState(() =>
-    Math.max(0, Math.min(initialIndex ?? 0, Math.max(0, safeItems.length - 1)))
+    Math.max(0, Math.min(initialIndex, Math.max(0, safeItems.length - 1)))
   );
-
   const [loading, setLoading] = useState(true);
   const current = safeItems[index];
-
   const videoRef = useRef<Video | null>(null);
+  const imageTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const [imageProgress, setImageProgress] = useState(0); // 0..1
-  const [videoProgress, setVideoProgress] = useState(0); // 0..1
+  const activeKind = current?.kind ?? (current ? inferViewerKind(current.uri) : null);
 
-  const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const activeKind = useMemo<ViewerItem['kind'] | null>(() => {
-    if (!current) return null;
-    return current.kind ?? inferViewerKind(current.uri);
-  }, [current]);
-
-  const clearImageProgressTimer = useCallback(() => {
-    if (progressTimerRef.current) {
-      clearInterval(progressTimerRef.current);
-      progressTimerRef.current = null;
+  const clearImageTimer = useCallback(() => {
+    if (imageTimer.current) {
+      clearInterval(imageTimer.current);
+      imageTimer.current = null;
     }
   }, []);
 
   const advance = useCallback(() => {
-    setIndex((prev) => {
-      const next = prev + 1;
-      if (next >= safeItems.length) return prev;
-      return next;
-    });
+    setIndex((prev) => Math.min(prev + 1, safeItems.length - 1));
   }, [safeItems.length]);
 
   const retreat = useCallback(() => {
-    setIndex((prev) => {
-      const next = prev - 1;
-      if (next < 0) return prev;
-      return next;
-    });
+    setIndex((prev) => Math.max(prev - 1, 0));
   }, []);
 
-  // Reset per index
+  // Reset state on index change
   useEffect(() => {
     setLoading(true);
-    setImageProgress(0);
-    setVideoProgress(0);
+    clearImageTimer();
 
-    clearImageProgressTimer();
-
-    if (videoRef.current && activeKind === 'video') {
-      // best-effort: reset position
-      (videoRef.current as any)?.setPositionAsync?.(0);
+    if (videoRef.current) {
+      videoRef.current.stopAsync();
     }
 
-    if (activeKind === 'image') {
-      const start = Date.now();
-      progressTimerRef.current = setInterval(() => {
-        const elapsed = Date.now() - start;
-        const p = Math.max(0, Math.min(1, elapsed / IMAGE_DURATION_MS));
-        setImageProgress(p);
-        if (p >= 1) {
-          clearImageProgressTimer();
-          runOnJS(advance)();
-        }
-      }, 50);
+    if (activeKind === 'image' && index < safeItems.length - 1) {
+      imageTimer.current = setInterval(() => {
+        runOnJS(advance)();
+      }, IMAGE_DURATION_MS);
     }
 
-    return () => {
-      clearImageProgressTimer();
-    };
-  }, [index, activeKind, advance, clearImageProgressTimer]);
+    return () => clearImageTimer();
+  }, [index, activeKind, advance, clearImageTimer]);
 
-  const onVideoStatusUpdate = useCallback(
+  const onVideoStatus = useCallback(
     (status: AVPlaybackStatus) => {
-      if (!status || typeof status !== 'object') return;
-      if (!('isLoaded' in status)) return;
-      const loadedStatus = status as any;
-      if (!loadedStatus.isLoaded) return;
-      if (activeKind !== 'video') return;
-
-      if (typeof loadedStatus.durationMillis === 'number' && loadedStatus.durationMillis > 0) {
-        const p = (loadedStatus.positionMillis ?? 0) / loadedStatus.durationMillis;
-        setVideoProgress(Math.max(0, Math.min(1, p)));
-      }
-
-      if (loadedStatus.didJustFinish) {
+      if (!status?.isLoaded) return;
+      const s = status as any;
+      if (s.didJustFinish) {
         runOnJS(advance)();
       }
     },
-    [activeKind, advance]
+    [advance]
   );
 
-  // Close gesture (swipe down)
+  // Gestures
   const zoomScale = useSharedValue(1);
   const dragY = useSharedValue(0);
   const animScale = useSharedValue(1);
+  const gestureActive = useSharedValue(false);
 
   const backdropStyle = useAnimatedStyle(() => ({
     opacity: withTiming(1 - Math.min(1, dragY.value / 240), { duration: 80 }),
   }));
 
   const swipeDown = Gesture.Pan()
-    .onUpdate((e) => {
+    .minDistance(10)
+    .onUpdate((e: any) => {
       if (zoomScale.value <= 1.02 && e.translationY > 0) {
         dragY.value = Math.min(180, e.translationY);
+        gestureActive.value = true;
       }
     })
-    .onEnd((e) => {
+    .onEnd((e: any) => {
+      gestureActive.value = false;
       if (zoomScale.value <= 1.02 && e.translationY > 120) {
         animScale.value = withTiming(0.98, { duration: 120 });
         runOnJS(onClose)();
@@ -157,8 +119,7 @@ export function StoryViewer({ items, initialIndex, onClose }: StoryViewerProps) 
 
   const pinch = Gesture.Pinch()
     .onUpdate((e) => {
-      const next = zoomScale.value * (e.scale || 1);
-      zoomScale.value = Math.max(0.95, Math.min(2.5, next));
+      zoomScale.value = Math.max(0.95, Math.min(2.5, zoomScale.value * (e.scale || 1)));
     })
     .onEnd(() => {
       if (zoomScale.value < 1.05) zoomScale.value = withTiming(1, { duration: 120 });
@@ -171,30 +132,21 @@ export function StoryViewer({ items, initialIndex, onClose }: StoryViewerProps) 
       zoomScale.value = withTiming(1, { duration: 120 });
     });
 
-  const swipeHorizontal = Gesture.Pan().onEnd((e) => {
-    if (zoomScale.value > 1.05) return;
+  const swipeHorizontal = Gesture.Pan()
+    .minDistance(30)
+    .onEnd((e: any) => {
+      if (zoomScale.value > 1.05) return;
+      if (gestureActive.value) return;
+      if (Math.abs(e.translationY) > Math.abs(e.translationX)) return;
+      if (e.translationX < 0) runOnJS(advance)();
+      else runOnJS(retreat)();
+    });
 
-    const absX = Math.abs(e.translationX);
-    const absY = Math.abs(e.translationY);
-
-    // Avoid accidental triggers from vertical scroll gestures
-    if (absX < 50) return;
-    if (absY > 70) return;
-
-    if (e.translationX < 0) advance();
-    else retreat();
-  });
-
-  const gesture = useMemo(
-    () => Gesture.Simultaneous(swipeDown, pinch, doubleTap, swipeHorizontal),
-    [advance, retreat, onClose]
+  const composedGesture = Gesture.Race(
+    Gesture.Simultaneous(swipeDown, pinch),
+    doubleTap,
+    swipeHorizontal
   );
-
-  const itemProgress = useMemo(() => {
-    return activeKind === 'video' ? videoProgress : imageProgress;
-  }, [activeKind, videoProgress, imageProgress]);
-
-
 
   if (!safeItems.length) {
     return (
@@ -210,7 +162,6 @@ export function StoryViewer({ items, initialIndex, onClose }: StoryViewerProps) 
 
   return (
     <View style={styles.root}>
-      {/* Backdrop blur/dim */}
       <Animated.View
         style={[styles.backdrop, backdropStyle]}
         entering={FadeIn.duration(120)}
@@ -223,7 +174,7 @@ export function StoryViewer({ items, initialIndex, onClose }: StoryViewerProps) 
         )}
       </Animated.View>
 
-      <GestureDetector gesture={gesture}>
+      <GestureDetector gesture={composedGesture}>
         <Animated.View
           style={[
             styles.content,
@@ -237,18 +188,17 @@ export function StoryViewer({ items, initialIndex, onClose }: StoryViewerProps) 
         >
           {/* Progress bars */}
           <View style={styles.progressRow}>
-            {safeItems.map((_, i) => {
-              const filled = i < index;
-              const active = i === index;
-
-              return (
-                <View key={i} style={[styles.progressBar, filled && styles.progressFilledBg]}>
-                  {active ? (
-                    <View style={[styles.progressFill, { transform: [{ scaleX: itemProgress }] }]} />
-                  ) : null}
-                </View>
-              );
-            })}
+            {safeItems.map((_, i) => (
+              <View
+                key={i}
+                style={[
+                  styles.progressBar,
+                  {
+                    backgroundColor: i <= index ? '#E040FB' : '#ffffff22',
+                  },
+                ]}
+              />
+            ))}
           </View>
 
           {/* Media */}
@@ -256,63 +206,53 @@ export function StoryViewer({ items, initialIndex, onClose }: StoryViewerProps) 
             {activeKind === 'image' ? (
               <>
                 <Image
-                  source={{ uri: current.uri }}
+                  key={current?.uri}
+                  source={{ uri: current?.uri }}
                   style={styles.mediaImage}
                   resizeMode="cover"
                   onLoadStart={() => setLoading(true)}
                   onLoadEnd={() => setLoading(false)}
                 />
-                {loading ? (
+                {loading && (
                   <View style={styles.loader}>
                     <ActivityIndicator size="large" color="#00BCD4" />
                   </View>
-                ) : null}
+                )}
               </>
             ) : (
               <View style={styles.mediaVideoWrap}>
                 <Video
-                  key={current?.uri}
-                  ref={(r) => {
-                    videoRef.current = r;
-                  }}
+                  key={`video-${index}`}
+                  ref={videoRef}
                   source={{ uri: current?.uri }}
                   style={styles.mediaImage}
                   resizeMode={ResizeMode.CONTAIN}
                   shouldPlay
-                  useNativeControls={false}
                   isLooping={false}
+                  useNativeControls={false}
                   onLoadStart={() => setLoading(true)}
                   onLoad={() => setLoading(false)}
-                  onPlaybackStatusUpdate={onVideoStatusUpdate}
+                  onPlaybackStatusUpdate={onVideoStatus}
                 />
-
-                {loading ? (
+                {loading && (
                   <View style={styles.loader}>
                     <ActivityIndicator size="large" color="#00BCD4" />
                   </View>
-                ) : null}
+                )}
               </View>
             )}
           </View>
 
-          {/* Navigation zones */}
+          {/* Tap zones */}
           <View style={styles.tapZones}>
-
             <Pressable style={styles.leftZone} onPress={retreat} />
             <Pressable style={styles.rightZone} onPress={advance} />
           </View>
 
-          {/* Close button */}
+          {/* Close */}
           <View style={styles.topRight}>
             <Pressable onPress={onClose} style={styles.closeBtn}>
               <Ionicons name="close" size={22} color="#fff" />
-            </Pressable>
-          </View>
-
-          <View style={styles.bottomControls}>
-            <Pressable style={styles.muteBtn} onPress={() => {}}>
-              <Ionicons name="volume-off" size={18} color="#fff" />
-              <Text style={styles.muteText}>Mute</Text>
             </Pressable>
           </View>
         </Animated.View>
@@ -325,37 +265,21 @@ const styles = StyleSheet.create({
   root: { ...StyleSheet.absoluteFillObject, overflow: 'hidden' },
   backdrop: { ...StyleSheet.absoluteFillObject },
   backdropTint: { ...StyleSheet.absoluteFillObject, backgroundColor: '#05050A80' },
-  content: {
-    flex: 1,
-    paddingTop: 18,
-    overflow: 'hidden',
-  },
-
+  content: { flex: 1, paddingTop: 18, overflow: 'hidden' },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   emptyText: { color: '#888', marginTop: 10, fontWeight: '700' },
-
   progressRow: {
     flexDirection: 'row',
     gap: 6,
     paddingHorizontal: 12,
     marginBottom: 10,
   },
-
   progressBar: {
     flex: 1,
     height: 3,
     borderRadius: 999,
     overflow: 'hidden',
-    backgroundColor: '#ffffff22',
   },
-  progressFilledBg: { backgroundColor: '#E040FB66' },
-  progressFill: {
-    flex: 1,
-    height: '100%',
-    backgroundColor: '#E040FB',
-    transformOrigin: 'left',
-  },
-
   mediaArea: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   mediaImage: {
     width: '100%',
@@ -364,7 +288,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   mediaVideoWrap: { width: '100%', height: '80%', borderRadius: 18, overflow: 'hidden' },
-
   loader: {
     position: 'absolute',
     left: 0,
@@ -374,11 +297,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-
-  tapZones: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, flexDirection: 'row' },
+  tapZones: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    flexDirection: 'row',
+  },
   leftZone: { flex: 1 },
   rightZone: { flex: 1 },
-
   topRight: { position: 'absolute', right: 14, top: 12 },
   closeBtn: {
     width: 42,
@@ -390,19 +318,4 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-
-  bottomControls: { position: 'absolute', bottom: 24, width: '100%', paddingHorizontal: 16 },
-  muteBtn: {
-    flexDirection: 'row',
-    alignSelf: 'flex-end',
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: '#0F0F1A80',
-    borderWidth: 1,
-    borderColor: '#2A2A4044',
-  },
-  muteText: { color: '#fff', fontWeight: '800' },
 });
-

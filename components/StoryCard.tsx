@@ -1,128 +1,74 @@
-import React, { memo, useMemo, useState } from 'react';
+import React from 'react';
+import { TouchableOpacity, Image, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import {
-  Image,
-  Platform,
-  Pressable,
-  StyleSheet,
-  View,
-  useWindowDimensions,
-} from 'react-native';
 
-export type StoryCardProps = {
-  uri: string;
-  size: number;
-  onPress: () => void;
-  isVideo?: boolean;
+type Item = {
+  uri?: string;
+  type?: 'image' | 'video';
+  label?: string;
 };
 
-function useHoverable() {
-  const { width } = useWindowDimensions();
-  // Heuristic: web/tablet width indicates hover; RN mobile doesn't.
-  return Platform.OS === 'web' && width >= 520;
+type StoryCardProps = {
+  item: Item;
+  index: number;
+  onPress: (index: number) => void;
+  size?: number;
+};
+
+export default function StoryCard({ item, index, onPress, size = 110 }: StoryCardProps) {
+  const uri = item.uri || '';
+  return (
+    <TouchableOpacity
+      style={[styles.container, { width: size }]}
+      onPress={() => onPress(index)}
+      activeOpacity={0.8}
+    >
+      <View style={[styles.ring, { width: size, height: size, borderRadius: size / 2 }]}>
+        <Image
+          source={{ uri }}
+          style={[styles.image, { width: size, height: size, borderRadius: size / 2 }]}
+          resizeMode="cover"
+        />
+        {item.type === 'video' && (
+          <View style={styles.videoBadge}>
+            <Ionicons name="play" size={Math.min(18, size * 0.16)} color="#fff" />
+          </View>
+        )}
+      </View>
+      {item.label ? (
+        <Text style={[styles.label, { maxWidth: size }]} numberOfLines={1}>
+          {item.label}
+        </Text>
+      ) : null}
+    </TouchableOpacity>
+  );
 }
 
-export const StoryCard = memo(function StoryCard({ uri, size, onPress, isVideo }: StoryCardProps) {
-  const [pressed, setPressed] = useState(false);
-  const hoverable = useHoverable();
-  const [hovered, setHovered] = useState(false);
-
-  const scale = useMemo(() => {
-    if (pressed) return 0.96;
-    if (hoverable && hovered) return 1.03;
-    return 1;
-  }, [pressed, hoverable, hovered]);
-
-  return (
-    <Pressable
-      onPress={onPress}
-      onPressIn={() => setPressed(true)}
-      onPressOut={() => setPressed(false)}
-      onHoverIn={hoverable ? () => setHovered(true) : undefined}
-      onHoverOut={hoverable ? () => setHovered(false) : undefined}
-      style={({ pressed: rnPressed }) => {
-        // RN web reports pressed state; keep it consistent
-        const finalPressed = pressed || rnPressed;
-        const finalScale = finalPressed ? 0.965 : scale;
-        return [
-          styles.wrap,
-          {
-            width: size + 6,
-            height: size + 6,
-            transform: [{ scale: finalScale }],
-          },
-        ];
-      }}
-    >
-      <View style={styles.inner}>
-        <Image source={{ uri }} style={[styles.thumb, { width: size, height: size }]} resizeMode="cover" />
-
-        {isVideo ? (
-          <View style={styles.playOverlay}>
-            <View style={styles.playCircle}>
-              <Ionicons name="play" size={16} color="#fff" />
-            </View>
-          </View>
-        ) : null}
-
-        <View pointerEvents="none" style={styles.glow} />
-      </View>
-    </Pressable>
-  );
-});
-
 const styles = StyleSheet.create({
-  wrap: {
+  container: {
     alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 999,
-    padding: 3,
-    backgroundColor: '#13131F',
-    borderWidth: 2,
+    marginBottom: 24,
+  },
+  ring: {
+    borderWidth: 3,
     borderColor: '#E040FB',
-    // Shadows
-    shadowColor: '#000',
-    shadowOpacity: 0.35,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 6,
-    overflow: 'hidden',
-  },
-
-  inner: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 999,
-    overflow: 'hidden',
-    backgroundColor: '#0F0F1A',
-  },
-
-  thumb: {
-    borderRadius: 999,
-    backgroundColor: '#13131F',
-  },
-
-  playOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#00000033',
-    alignItems: 'center',
     justifyContent: 'center',
-  },
-
-  playCircle: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: '#E040FBcc',
     alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#ffffff33',
+    overflow: 'hidden',
+    backgroundColor: '#111',
   },
-
-  glow: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'transparent',
+  image: {},
+  label: {
+    color: '#fff',
+    marginTop: 8,
+    fontSize: 13,
+  },
+  videoBadge: {
+    position: 'absolute',
+    bottom: 6,
+    right: 6,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    borderRadius: 20,
+    padding: 4,
   },
 });
-

@@ -9,20 +9,71 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useInstagramAnalyticsData } from '@/hooks/useInstagramAnalyticsData';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, G, Path, Text as SvgText } from 'react-native-svg';
 import { useRouter } from 'expo-router';
 
+import { useInstagramAnalyticsData } from '@/hooks/useInstagramAnalyticsData';
+import type { Analytics } from '@/utils/instagramAnalyticsUtils';
 import type { ExtractedMedia } from '@/utils/mediaTypes';
+import { buildAnalytics } from '@/utils/instagramAnalyticsUtils';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
 
-type TabKey = 'followers' | 'engagement' | 'activity';
+type RelationshipListType =
+  | 'notfollowingback'
+  | 'dontfollowback'
+  | 'mutuals'
+  | 'pending'
+  | 'followers'
+  | 'following'
+  | 'blocked'
+  | 'restricted'
+  | 'closefriends'
+  | 'recentlyunfollowed'
+  | 'removedsuggestions'
+  | 'recentfollowrequests'
+  | 'hashtags';
+
+type TabKey = 'overview' | 'engagement' | 'activity';
+
+function CategoryCard({
+  title,
+  value,
+  color,
+  icon,
+  onPress,
+  listType,
+}: {
+  title: string;
+  value: number;
+  color: string;
+  icon: string;
+  listType: RelationshipListType;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.85}
+      style={[styles.moreCard, { borderColor: color + '44', backgroundColor: '#1A1A2E' }]}
+    >
+      <View style={[styles.moreCardIcon, { backgroundColor: color + '22' }]}>
+        <Ionicons name={icon as any} size={18} color={color} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.moreCardTitle}>{title}</Text>
+        <Text style={styles.moreCardValue}>{value.toLocaleString()}</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color="#555" />
+    </TouchableOpacity>
+  );
+}
 
 interface InstagramData {
+
   followers: string[];
   following: string[];
   pendingRequests?: string[];
@@ -292,16 +343,10 @@ function ErrorState({
 export default function DashboardScreen() {
   const router = useRouter();
 
-  // Shared hook not used yet; dashboard keeps its own defensive loading to avoid half-migration issues.
-  void useInstagramAnalyticsData;
+  const { loading, errorMsg, data, stats } = useInstagramAnalyticsData();
 
-  const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [data, setData] = useState<InstagramData | null>(null);
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [media, setMedia] = useState<ExtractedMedia | null>(null);
+  const [activeTab, setActiveTab] = useState<TabKey>('overview');
 
-  const [activeTab, setActiveTab] = useState<TabKey>('followers');
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
@@ -316,76 +361,15 @@ export default function DashboardScreen() {
 
   const clearData = async () => {
     try {
-      await AsyncStorage.removeItem(STORAGE_KEY_DATA);
-      await AsyncStorage.removeItem(STORAGE_KEY_MEDIA_V1);
-      await AsyncStorage.removeItem(STORAGE_KEY_MEDIA);
+      await AsyncStorage.removeItem('instainsight_data');
+      await AsyncStorage.removeItem('instainsight_media_v1');
+      await AsyncStorage.removeItem('instainsight_media');
     } catch {
       // ignore
     }
     router.replace('/');
   };
 
-  useEffect(() => {
-    let mounted = true;
-
-    (async () => {
-      try {
-        setLoading(true);
-        setErrorMsg(null);
-
-        const [stored, storedMedia] = await Promise.all([
-          AsyncStorage.getItem(STORAGE_KEY_DATA),
-          AsyncStorage.getItem(STORAGE_KEY_MEDIA),
-        ]);
-
-        if (stored) {
-          try {
-            const parsed = JSON.parse(stored) as StoredPayload;
-            const normalized = safeInstagramData(parsed);
-
-            if (!normalized) {
-              // Corrupted or missing shape: reset to prevent crash loops.
-              setErrorMsg('Stored Instagram data is corrupted.');
-            } else {
-              if (!mounted) return;
-              setData(normalized);
-              setStats(computeStatsSafe(normalized));
-            }
-          } catch {
-            setErrorMsg('Stored Instagram data could not be parsed.');
-          }
-        }
-
-        if (storedMedia) {
-          try {
-            const parsedMedia = JSON.parse(storedMedia) as ExtractedMedia;
-            if (mounted) setMedia(parsedMedia);
-          } catch {
-            if (mounted) setMedia(null);
-          }
-        }
-
-        if (mounted) {
-          setLoading(false);
-          Animated.timing(fadeAnim, {
-            toValue: 1,
-            duration: 600,
-            useNativeDriver: true,
-          }).start();
-        }
-      } catch (e: any) {
-        if (!mounted) return;
-        setLoading(false);
-        setErrorMsg(e?.message || 'Failed to load dashboard data.');
-      }
-    })();
-
-    return () => {
-      mounted = false;
-    };
-  }, [fadeAnim]);
-
-  // Derived UI labels: safe and only use when data exists.
   const processedDate = useMemo(() => {
     if (!data) return '—';
     const d = new Date(data.processedAt);
@@ -400,33 +384,12 @@ export default function DashboardScreen() {
       : '—';
   }, [data]);
 
+
   const mostActiveMonthLabel = useMemo(() => {
-    if (!media) return '—';
+    // Media intelligence not wired in this migration yet.
+    return '—';
+  }, []);
 
-    const archived = Array.isArray((media as any)?.archived) ? (media as any).archived : [];
-    const stories = Array.isArray((media as any)?.stories) ? (media as any).stories : [];
-
-    const map = new Map<string, number>();
-    const add = (m: any) => {
-      const label = typeof m?.label === 'string' ? m.label : null;
-      const images = Array.isArray(m?.images) ? m.images : [];
-      if (!label) return;
-      map.set(label, (map.get(label) ?? 0) + images.length);
-    };
-
-    archived.forEach(add);
-    stories.forEach(add);
-
-    let bestLabel = '—';
-    let best = -1;
-    for (const [k, v] of map.entries()) {
-      if (v > best) {
-        best = v;
-        bestLabel = k;
-      }
-    }
-    return bestLabel;
-  }, [media]);
 
   const pieData = useMemo(() => {
     if (!stats) return [];
@@ -436,6 +399,20 @@ export default function DashboardScreen() {
       { label: "Don't Follow Back", value: stats.dontFollowBack, color: '#FFC107' },
     ];
   }, [stats]);
+
+  const analytics: Analytics | null = useMemo(() => {
+    if (!data) return null;
+
+    const toUsers = (names: string[]) => names.map((u) => ({ username: u }));
+
+    return buildAnalytics({
+      followers: toUsers(data.followers),
+      following: toUsers(data.following),
+      pending: toUsers(data.pendingRequests ?? []),
+    });
+  }, [data]);
+
+
 
   if (loading) {
     return (
@@ -449,7 +426,6 @@ export default function DashboardScreen() {
     return <ErrorState title="Dashboard Error" subtitle={errorMsg} onReset={clearData} />;
   }
 
-  // Prevent render until normalized data + stats exist.
   if (!data || !stats) {
     return (
       <View style={[styles.container, styles.center]}>
@@ -463,8 +439,10 @@ export default function DashboardScreen() {
     );
   }
 
+
   const openGallery = () => router.push('/gallery');
   const openStories = () => router.push('/stories');
+
 
   return (
     <View style={styles.container}>
@@ -474,7 +452,7 @@ export default function DashboardScreen() {
       />
 
       <View style={styles.tabBar}>
-        {(['followers', 'engagement', 'activity'] as const).map((tab) => (
+        {(['overview', 'engagement', 'activity'] as const).map((tab) => (
           <TouchableOpacity
             key={tab}
             style={[styles.tab, activeTab === tab && styles.activeTab]}
@@ -487,6 +465,7 @@ export default function DashboardScreen() {
         ))}
       </View>
 
+
       <Animated.ScrollView
         style={{ opacity: fadeAnim }}
         contentContainerStyle={styles.scroll}
@@ -495,11 +474,12 @@ export default function DashboardScreen() {
         <View style={styles.header}>
           <View>
             <Text style={styles.headerTitle}>
-              {activeTab === 'followers'
-                ? 'Followers'
+            {activeTab === 'overview'
+                ? 'Overview'
                 : activeTab === 'engagement'
                   ? 'Engagement'
                   : 'Activity'}
+
             </Text>
             <Text style={styles.headerSub}>Updated {processedDate}</Text>
           </View>
@@ -559,28 +539,21 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* Followers tab */}
-        {activeTab === 'followers' && (
+        {/* Overview tab */}
+        {activeTab === 'overview' && (
           <>
             <View style={styles.statsGrid}>
               <StatCard label="Followers" value={stats.totalFollowers} icon="people" color="#E040FB" />
-              <StatCard
-                label="Following"
-                value={stats.totalFollowing}
-                icon="person-add"
-                color="#7C4DFF"
-              />
+              <StatCard label="Following" value={stats.totalFollowing} icon="person-add" color="#7C4DFF" />
             </View>
 
             <View style={styles.statsGrid}>
               <StatCard
-                label="Not Following"
+                label="Not Following Back"
                 value={stats.notFollowingBack}
                 icon="person-remove"
                 color="#FF5252"
-                onPress={() =>
-                  router.push({ pathname: '/userlist', params: { type: 'notfollowingback' } })
-                }
+                onPress={() => router.push({ pathname: '/userlist', params: { type: 'notfollowingback' } })}
               />
               <StatCard
                 label="Mutuals"
@@ -593,7 +566,7 @@ export default function DashboardScreen() {
 
             <View style={styles.statsGrid}>
               <StatCard
-                label="Pending"
+                label="Pending Requests"
                 value={stats.pendingRequests}
                 icon="time-outline"
                 color="#FFC107"
@@ -605,24 +578,94 @@ export default function DashboardScreen() {
             <View style={styles.chartCard}>
               <Text style={styles.chartTitle}>Relationship Distribution</Text>
               <PieChart data={pieData} />
-              <View style={styles.legend}>
-                {pieData.map((d, i) => (
-                  <View key={i} style={styles.legendItem}>
-                    <View style={[styles.legendDot, { backgroundColor: d.color }]} />
-                    <Text style={styles.legendLabel}>
-                      {d.label} ({d.value})
-                    </Text>
-                  </View>
-                ))}
-              </View>
             </View>
 
             <View style={styles.chartCard}>
               <Text style={styles.chartTitle}>Overview Comparison</Text>
               <BarChart stats={stats} />
             </View>
+
+            {/* All other analytics categories as scrollable cards */}
+            <View style={styles.actionsCard}>
+              <Text style={styles.chartTitle}>More Insights</Text>
+              <Text style={styles.cardSub}>Open lists to explore each category</Text>
+
+              <View style={styles.moreCardsWrap}>
+                {analytics ? (
+                  <>
+                    <CategoryCard
+                      title="You Don't Follow Back"
+                      value={analytics.fans.count}
+                      color="#FFC107"
+                      icon="eye-off"
+                      listType="dontfollowback"
+                      onPress={() => router.push({ pathname: '/userlist', params: { type: 'dontfollowback' } })}
+                    />
+                    <CategoryCard
+                      title="Blocked"
+                      value={analytics.blocked.count}
+                      color="#FF5252"
+                      icon="stop-circle-outline"
+                      listType="blocked"
+                      onPress={() => router.push({ pathname: '/userlist', params: { type: 'blocked' } })}
+                    />
+                    <CategoryCard
+                      title="Restricted"
+                      value={analytics.restricted.count}
+                      color="#E040FB"
+                      icon="lock-closed-outline"
+                      listType="restricted"
+                      onPress={() => router.push({ pathname: '/userlist', params: { type: 'restricted' } })}
+                    />
+                    <CategoryCard
+                      title="Close Friends"
+                      value={analytics.closeFriends.count}
+                      color="#00BCD4"
+                      icon="person-add-outline"
+                      listType="closefriends"
+                      onPress={() => router.push({ pathname: '/userlist', params: { type: 'closefriends' } })}
+                    />
+                    <CategoryCard
+                      title="Recently Unfollowed"
+                      value={analytics.recentlyUnfollowed.count}
+                      color="#7C4DFF"
+                      icon="person-remove-outline"
+                      listType="recentlyunfollowed"
+                      onPress={() => router.push({ pathname: '/userlist', params: { type: 'recentlyunfollowed' } })}
+                    />
+                    <CategoryCard
+                      title="Removed Suggestions"
+                      value={analytics.removedSuggestions.count}
+                      color="#9E9E9E"
+                      icon="trash-outline"
+                      listType="removedsuggestions"
+                      onPress={() => router.push({ pathname: '/userlist', params: { type: 'removedsuggestions' } })}
+                    />
+                    <CategoryCard
+                      title="Recent Follow Requests"
+                      value={analytics.recentFollowRequests.count}
+                      color="#FFC107"
+                      icon="time-outline"
+                      listType="recentfollowrequests"
+                      onPress={() => router.push({ pathname: '/userlist', params: { type: 'recentfollowrequests' } })}
+                    />
+                    <CategoryCard
+                      title="Hashtags"
+                      value={analytics.hashtags.count}
+                      color="#E91E63"
+                      icon="hash"
+                      listType="hashtags"
+                      onPress={() => router.push({ pathname: '/userlist', params: { type: 'hashtags' } })}
+                    />
+                  </>
+                ) : (
+                  <Text style={styles.emptyNote}>No analytics categories available.</Text>
+                )}
+              </View>
+            </View>
           </>
         )}
+
 
         {/* Engagement tab */}
         {activeTab === 'engagement' && (
@@ -700,6 +743,29 @@ export default function DashboardScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0F0F1A' },
+
+  moreCardsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 14 },
+  moreCard: {
+    width: '48%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 14,
+    gap: 12,
+  },
+  moreCardIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  moreCardTitle: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  moreCardValue: { color: '#888', fontSize: 12, fontWeight: '700', marginTop: 4 },
+
   center: { alignItems: 'center', justifyContent: 'center' },
   scroll: { padding: 20, paddingTop: 28, paddingBottom: 40 },
 

@@ -9,6 +9,12 @@ import { getJsonFromStorage } from '@/utils/storageService';
 
 const STORAGE_KEY_DATA = 'instainsight_data';
 const STORAGE_KEY_MEDIA = 'instainsight_media';
+const STORAGE_KEY_ANALYTICS = 'instainsight_analytics';
+
+import type { Analytics } from '@/utils/instagramAnalyticsUtils';
+
+
+
 
 export type InstagramData = {
   followers: string[];
@@ -33,6 +39,12 @@ export type DashboardStats = {
   mutuals: number;
   pendingRequests: number;
 };
+
+type StoredAnalytics = {
+  analytics: Analytics;
+  processedAt: number;
+};
+
 
 function safeStringArray(input: unknown): string[] {
   return Array.isArray(input) ? (input.filter((x) => typeof x === 'string') as string[]) : [];
