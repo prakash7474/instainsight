@@ -1,5 +1,5 @@
 /* =========================================================
-   INSTAGRAM ANALYTICS ENGINE
+   INSTAGRAM ANALYTICS ENGINE (FIXED)
 ========================================================= */
 
 export type User = {
@@ -33,25 +33,23 @@ export type Analytics = {
 };
 
 /* =========================================================
-   NORMALIZE USERNAME (UNIVERSAL)
+   NORMALIZE
 ========================================================= */
 
 export const normalize = (value: string) =>
-  value
-    ?.trim()
-    ?.toLowerCase()
-    ?.replace('@', '') || '';
+  value?.trim()?.toLowerCase()?.replace(/^@/, '') || '';
 
 /* =========================================================
-   REMOVE DUPLICATES (UNIVERSAL)
+   UNIQUE USERS
 ========================================================= */
 
 export const uniqueUsers = (users: User[]): User[] => {
   const map = new Map<string, User>();
 
-  users.forEach((user) => {
+  for (const user of users) {
     const key = normalize(user.username);
-    if (!key) return;
+
+    if (!key) continue;
 
     if (!map.has(key)) {
       map.set(key, {
@@ -59,23 +57,29 @@ export const uniqueUsers = (users: User[]): User[] => {
         username: key,
       });
     }
-  });
+  }
 
   return Array.from(map.values());
 };
 
 const uniqueHashtags = (hashtags: string[]) => {
   const map = new Map<string, string>();
-  hashtags.forEach((h) => {
-    const key = normalize(h).replace('#', '');
+
+  hashtags.forEach((tag) => {
+    const key = normalize(tag).replace('#', '');
+
     if (!key) return;
-    if (!map.has(key)) map.set(key, key);
+
+    if (!map.has(key)) {
+      map.set(key, key);
+    }
   });
+
   return Array.from(map.values());
 };
 
 /* =========================================================
-   SET OPERATIONS (OPTIMIZED)
+   SET HELPERS
 ========================================================= */
 
 const createSet = (users: User[]) =>
@@ -83,126 +87,228 @@ const createSet = (users: User[]) =>
 
 const intersectionUsers = (a: User[], b: User[]): User[] => {
   const aSet = createSet(a);
+
   const out: User[] = [];
   const seen = new Set<string>();
-  for (const u of b) {
-    const key = normalize(u.username);
+
+  for (const user of b) {
+    const key = normalize(user.username);
+
     if (!key) continue;
     if (seen.has(key)) continue;
+
     if (aSet.has(key)) {
       seen.add(key);
-      out.push({ ...u, username: key });
+
+      out.push({
+        ...user,
+        username: key,
+      });
     }
   }
+
   return out;
 };
 
 const differenceUsers = (a: User[], b: User[]): User[] => {
   const bSet = createSet(b);
+
   const out: User[] = [];
   const seen = new Set<string>();
-  for (const u of a) {
-    const key = normalize(u.username);
+
+  for (const user of a) {
+    const key = normalize(user.username);
+
     if (!key) continue;
     if (seen.has(key)) continue;
+
     if (!bSet.has(key)) {
       seen.add(key);
-      out.push({ ...u, username: key });
+
+      out.push({
+        ...user,
+        username: key,
+      });
     }
   }
+
   return out;
 };
 
 /* =========================================================
-   GENERIC HTML PARSER
+   INSTAGRAM USERNAME EXTRACTION (FIXED)
 ========================================================= */
 
-const normalizeMaybeAt = (value: string) => normalize(value).replace('@', '');
+const extractInstagramUsername = (href: string): string => {
+  if (!href) return '';
+
+  try {
+    const cleanHref = href.trim();
+
+    const match = cleanHref.match(
+      /instagram\.com\/([a-zA-Z0-9._]+)\/?/i
+    );
+
+    if (!match?.[1]) return '';
+
+    const username = normalize(match[1]);
+
+    // Ignore non-profile routes
+    const invalidRoutes = new Set([
+      'p',
+      'reel',
+      'stories',
+      'explore',
+      'accounts',
+      'tv',
+      'direct',
+    ]);
+
+    if (invalidRoutes.has(username)) {
+      return '';
+    }
+
+    return username;
+  } catch {
+    return '';
+  }
+};
+
+/* =========================================================
+   TIMESTAMP DETECTION (FIXED)
+========================================================= */
 
 const looksLikeTimestamp = (text: string) => {
   const t = text.trim().toLowerCase();
-  if (!t) return false;
+
   return (
-    t.includes('202') ||
-    t.includes('am') ||
-    t.includes('pm') ||
-    t.includes('apr') ||
-    t.includes('may') ||
-    t.includes('jun')
+    /\b(20\d{2})\b/.test(t) ||
+    /\b(am|pm)\b/.test(t) ||
+    /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/.test(t)
   );
-};
-
-const safeText = (node: Element | null | undefined): string => {
-  if (!node) return '';
-  return (node.textContent || '').trim();
-};
-
-const extractUsernameFromAnchor = (a: HTMLAnchorElement): string => {
-  const hrefPart = (a.getAttribute('href') || '')
-    .split('/')
-    .filter(Boolean)
-    .pop();
-  const byHref = hrefPart || '';
-  const byText = safeText(a);
-  return byText || byHref;
 };
 
 const safeHrefToProfile = (href: string): string | undefined => {
   if (!href) return undefined;
+
   try {
     if (href.startsWith('/')) {
       return `https://www.instagram.com${href}`;
     }
+
     return href;
   } catch {
     return undefined;
   }
 };
 
-export const parseInstagramHtmlUsers = (html: string): User[] => {
-  if (typeof html !== 'string' || !html) return [];
+/* =========================================================
+   USERNAME EXTRACTION FROM HTML
+========================================================= */
+
+export const extractUsernamesFromInstagramHtml = (
+  html: string
+): string[] => {
+  const usernamesSet = new Set<string>();
+
+  if (typeof html !== 'string' || !html) {
+    return [];
+  }
+
+  // Match all <a href="..."> links
+  const linkRegex = /<a[^>]+href="([^"]+)"[^>]*>/g;
+
+  let match: RegExpExecArray | null;
+
+  while ((match = linkRegex.exec(html)) !== null) {
+    const href = match[1];
+
+    if (!href.includes('instagram.com/')) continue;
+
+    // Normalize → remove trailing slash
+    const cleaned = href.replace(/\/+$/, '');
+
+    const username = cleaned.split('/').pop() || '';
+
+    if (!username) continue;
+
+    // Keep behavior consistent with the rest of the engine
+    usernamesSet.add(normalize(username));
+  }
+
+  return Array.from(usernamesSet).filter(Boolean);
+};
+
+/* =========================================================
+   GENERIC INSTAGRAM HTML PARSER (FIXED)
+========================================================= */
+
+export const parseInstagramHtmlUsers = (
+  html: string
+): User[] => {
+  if (typeof html !== 'string' || !html) {
+    return [];
+  }
 
   try {
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
 
-    // Prefer Instagram list blocks.
-    const blocks: Element[] = Array.from(doc.querySelectorAll('div.pam'));
-    const effectiveBlocks = blocks.length
-      ? blocks
-      : Array.from(doc.querySelectorAll('a[href*="instagram.com/"]'));
+    const blocks = Array.from(
+      doc.querySelectorAll('div.pam')
+    );
+
+    const effectiveBlocks =
+      blocks.length > 0
+        ? blocks
+        : Array.from(
+            doc.querySelectorAll(
+              'a[href*="instagram.com/"]'
+            )
+          ).map((a) => a.parentElement || a);
 
     const found: User[] = [];
 
     for (const block of effectiveBlocks) {
-      // In fallback mode, `block` may itself be an <a>
-      const anchor =
-        (block.tagName?.toLowerCase?.() === 'a'
-          ? block
-          : block.querySelector('a')) as HTMLAnchorElement | null;
+      const anchor = block.querySelector(
+        'a[href*="instagram.com/"]'
+      ) as HTMLAnchorElement | null;
 
       if (!anchor) continue;
 
       const href = anchor.getAttribute('href') || '';
+
+      const username = extractInstagramUsername(href);
+
+      if (!username || username.length < 2) {
+        continue;
+      }
+
       const profileUrl = safeHrefToProfile(href);
 
-      const usernameRaw = extractUsernameFromAnchor(anchor);
-      const usernameNorm = normalizeMaybeAt(usernameRaw);
-      if (!usernameNorm || usernameNorm.length < 2) continue;
-
-      // Best-effort timestamp extraction
+      // Extract timestamp
       let timestamp: string | undefined;
-      const divs: Element[] = Array.from(block.querySelectorAll('div'));
+
+      const divs = Array.from(
+        block.querySelectorAll('div')
+      );
+
       for (const div of divs) {
-        const t = (div.textContent || '').trim();
-        if (!t) continue;
-        if (looksLikeTimestamp(t)) {
-          timestamp = t;
+        const text = (div.textContent || '').trim();
+
+        if (!text) continue;
+
+        if (looksLikeTimestamp(text)) {
+          timestamp = text;
           break;
         }
       }
 
-      found.push({ username: usernameNorm, profileUrl, timestamp });
+      found.push({
+        username,
+        profileUrl,
+        timestamp,
+      });
     }
 
     return uniqueUsers(found);
@@ -211,14 +317,36 @@ export const parseInstagramHtmlUsers = (html: string): User[] => {
   }
 };
 
-export const parsePendingFollowRequestsHtml = (html: string): User[] => {
+/* =========================================================
+   PENDING FOLLOW REQUESTS PARSER
+========================================================= */
+
+export const parsePendingFollowRequestsHtml = (
+  html: string
+): User[] => {
   const pending = parseInstagramHtmlUsers(html);
+
   return [...pending].sort((a, b) => {
-    const ta = a.timestamp ? Date.parse(a.timestamp) : NaN;
-    const tb = b.timestamp ? Date.parse(b.timestamp) : NaN;
-    if (!Number.isFinite(ta) && !Number.isFinite(tb)) return 0;
-    if (!Number.isFinite(ta)) return 1;
-    if (!Number.isFinite(tb)) return -1;
+    const ta = a.timestamp
+      ? Date.parse(a.timestamp)
+      : NaN;
+
+    const tb = b.timestamp
+      ? Date.parse(b.timestamp)
+      : NaN;
+
+    if (!Number.isFinite(ta) && !Number.isFinite(tb)) {
+      return 0;
+    }
+
+    if (!Number.isFinite(ta)) {
+      return 1;
+    }
+
+    if (!Number.isFinite(tb)) {
+      return -1;
+    }
+
     return tb - ta;
   });
 };
@@ -227,8 +355,11 @@ export const parsePendingFollowRequestsHtml = (html: string): User[] => {
    SECTION HELPERS
 ========================================================= */
 
-export const createSection = (users: User[]): AnalyticsSection => {
+export const createSection = (
+  users: User[]
+): AnalyticsSection => {
   const unique = uniqueUsers(users);
+
   return {
     count: unique.length,
     users: unique,
@@ -239,24 +370,56 @@ export const createSection = (users: User[]): AnalyticsSection => {
    CATEGORY CALCULATIONS
 ========================================================= */
 
-export const getMutuals = (followers: User[], following: User[]) =>
-  createSection(intersectionUsers(followers, following));
+export const getMutuals = (
+  followers: User[],
+  following: User[]
+) =>
+  createSection(
+    intersectionUsers(followers, following)
+  );
 
-export const getNotFollowingBack = (followers: User[], following: User[]) =>
-  createSection(differenceUsers(following, followers));
+export const getNotFollowingBack = (
+  followers: User[],
+  following: User[]
+) =>
+  createSection(
+    differenceUsers(following, followers)
+  );
 
-export const getFans = (followers: User[], following: User[]) =>
-  createSection(differenceUsers(followers, following));
+export const getFans = (
+  followers: User[],
+  following: User[]
+) =>
+  createSection(
+    differenceUsers(followers, following)
+  );
 
-export const validateAnalytics = (analytics: Pick<Analytics, 'followers' | 'following' | 'mutuals' | 'notFollowingBack' | 'fans'>) => {
+/* =========================================================
+   VALIDATION
+========================================================= */
+
+export const validateAnalytics = (
+  analytics: Pick<
+    Analytics,
+    | 'followers'
+    | 'following'
+    | 'mutuals'
+    | 'notFollowingBack'
+    | 'fans'
+  >
+) => {
   const followers = analytics.followers.count;
   const following = analytics.following.count;
   const mutuals = analytics.mutuals.count;
-  const notFollowingBack = analytics.notFollowingBack.count;
+  const notFollowingBack =
+    analytics.notFollowingBack.count;
   const fans = analytics.fans.count;
 
-  const followingValid = mutuals + notFollowingBack === following;
-  const followersValid = mutuals + fans === followers;
+  const followingValid =
+    mutuals + notFollowingBack === following;
+
+  const followersValid =
+    mutuals + fans === followers;
 
   return {
     followingValid,
@@ -281,15 +444,37 @@ export const buildAnalytics = (params: {
   recentFollowRequests?: User[];
   hashtags?: string[];
 }): Analytics => {
-  const followersUnique = uniqueUsers(params.followers || []);
-  const followingUnique = uniqueUsers(params.following || []);
+  const followersUnique = uniqueUsers(
+    params.followers || []
+  );
 
-  const followers = createSection(followersUnique);
-  const following = createSection(followingUnique);
+  const followingUnique = uniqueUsers(
+    params.following || []
+  );
 
-  const mutuals = getMutuals(followersUnique, followingUnique);
-  const notFollowingBack = getNotFollowingBack(followersUnique, followingUnique);
-  const fans = getFans(followersUnique, followingUnique);
+  const followers = createSection(
+    followersUnique
+  );
+
+  const following = createSection(
+    followingUnique
+  );
+
+  const mutuals = getMutuals(
+    followersUnique,
+    followingUnique
+  );
+
+  const notFollowingBack =
+    getNotFollowingBack(
+      followersUnique,
+      followingUnique
+    );
+
+  const fans = getFans(
+    followersUnique,
+    followingUnique
+  );
 
   const validation = validateAnalytics({
     followers,
@@ -300,26 +485,10 @@ export const buildAnalytics = (params: {
   });
 
   if (!validation.valid) {
-    console.error('Analytics Validation Failed', validation);
-    // Prevent invalid UI rendering: return empty relationship sections.
-    return {
-      followers: { count: 0, users: [] },
-      following: { count: 0, users: [] },
-      mutuals: { count: 0, users: [] },
-      notFollowingBack: { count: 0, users: [] },
-      fans: { count: 0, users: [] },
-      pending: createSection(params.pending || []),
-      blocked: createSection(params.blocked || []),
-      restricted: createSection(params.restricted || []),
-      closeFriends: createSection(params.closeFriends || []),
-      recentlyUnfollowed: createSection(params.recentlyUnfollowed || []),
-      removedSuggestions: createSection(params.removedSuggestions || []),
-      recentFollowRequests: createSection(params.recentFollowRequests || []),
-      hashtags: {
-        count: (params.hashtags || []).length,
-        hashtags: uniqueHashtags(params.hashtags || []),
-      },
-    };
+    console.error(
+      'Analytics Validation Failed',
+      validation
+    );
   }
 
   return {
@@ -329,19 +498,42 @@ export const buildAnalytics = (params: {
     notFollowingBack,
     fans,
 
-    pending: createSection(params.pending || []),
-    blocked: createSection(params.blocked || []),
-    restricted: createSection(params.restricted || []),
-    closeFriends: createSection(params.closeFriends || []),
+    pending: createSection(
+      params.pending || []
+    ),
 
-    recentlyUnfollowed: createSection(params.recentlyUnfollowed || []),
-    removedSuggestions: createSection(params.removedSuggestions || []),
-    recentFollowRequests: createSection(params.recentFollowRequests || []),
+    blocked: createSection(
+      params.blocked || []
+    ),
+
+    restricted: createSection(
+      params.restricted || []
+    ),
+
+    closeFriends: createSection(
+      params.closeFriends || []
+    ),
+
+    recentlyUnfollowed: createSection(
+      params.recentlyUnfollowed || []
+    ),
+
+    removedSuggestions: createSection(
+      params.removedSuggestions || []
+    ),
+
+    recentFollowRequests: createSection(
+      params.recentFollowRequests || []
+    ),
 
     hashtags: {
-      count: uniqueHashtags(params.hashtags || []).length,
-      hashtags: uniqueHashtags(params.hashtags || []),
+      count: uniqueHashtags(
+        params.hashtags || []
+      ).length,
+
+      hashtags: uniqueHashtags(
+        params.hashtags || []
+      ),
     },
   };
 };
-
