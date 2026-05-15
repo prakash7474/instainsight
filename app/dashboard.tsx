@@ -409,6 +409,12 @@ export default function DashboardScreen() {
       followers: toUsers(data.followers),
       following: toUsers(data.following),
       pending: toUsers(data.pendingRequests ?? []),
+      blocked: toUsers(data.blocked ?? []),
+      restricted: toUsers(data.restricted ?? []),
+      recentlyUnfollowed: toUsers(data.recentlyUnfollowed ?? []),
+      removedSuggestions: toUsers(data.removedSuggestions ?? []),
+      recentFollowRequests: toUsers(data.recentRequests ?? []),
+      hashtags: data.hashtags ?? [],
     });
   }, [data]);
 

@@ -20,6 +20,7 @@ import JSZip from 'jszip';
 import { extractMediaFromZip } from '@/utils/parseMediaFromZip';
 import { extractStories, setActiveZip } from '@/utils/stories';
 import { buildAnalytics, parsePendingFollowRequestsHtml, uniqueUsers, type User } from '@/utils/instagramAnalyticsUtils';
+import { parseInstagramZip } from '@/utils/instagramZipParser';
 
 
 
@@ -122,7 +123,11 @@ export default function UploadScreen() {
                 'connections/followers_and_following/pending_follow_requests.html',
                 'pending_follow_requests.json',
             ]);
-            animateProgress(95);
+            animateProgress(94);
+
+            // 🚀 NEW: Parse all insight data files from connections/followers_and_following/
+            const insights = await parseInstagramZip(zip);
+            animateProgress(97);
 
             if (!followers.length && !following.length) {
                 // Try to list files for debugging
@@ -144,6 +149,12 @@ export default function UploadScreen() {
             const data = {
                 followers,
                 following,
+                blocked: insights.blocked,
+                restricted: insights.restricted,
+                recentlyUnfollowed: insights.recentlyUnfollowed,
+                recentRequests: insights.recentRequests,
+                removedSuggestions: insights.removedSuggestions,
+                hashtags: insights.hashtags,
                 pendingRequests,
                 engagement,
                 activity,

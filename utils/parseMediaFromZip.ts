@@ -1,10 +1,39 @@
 import JSZip from 'jszip';
 import { Platform } from 'react-native';
+import * as FileSystem from 'expo-file-system';
 import { MediaStore } from './mediaTypes';
 
 
 const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp']);
 const VIDEO_EXT = new Set(['.mp4', '.mov', '.webm']);
+
+export async function loadZipFromUri(uri: string): Promise<JSZip> {
+  // ✅ Validate first (native)
+  if (Platform.OS !== 'web') {
+    const info = await FileSystem.getInfoAsync(uri);
+    if (!info.exists) throw new Error(`ZIP file does not exist: ${uri}`);
+    if (!info.size || info.size === 0) throw new Error(`ZIP file is empty: ${uri}`);
+    console.log('[InstaInsight][ZIP] File size:', info.size, 'bytes');
+  }
+
+  // ✅ Web — fetch as ArrayBuffer
+  if (Platform.OS === 'web') {
+    const response = await fetch(uri);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch ZIP from ${uri}. HTTP ${response.status}`);
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    return await JSZip.loadAsync(arrayBuffer);
+  }
+
+  // ✅ Native — read as base64 then convert
+  const base64 = await FileSystem.readAsStringAsync(uri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+
+  return await JSZip.loadAsync(base64, { base64: true });
+}
+
 
 function normPath(p: string) {
   return (p || '').replace(/\\/g, '/');

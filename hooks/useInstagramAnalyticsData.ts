@@ -19,7 +19,13 @@ import type { Analytics } from '@/utils/instagramAnalyticsUtils';
 export type InstagramData = {
   followers: string[];
   following: string[];
-  pendingRequests?: string[];
+  blocked: string[];
+  restricted: string[];
+  recentlyUnfollowed: string[];
+  recentRequests: string[];
+  removedSuggestions: string[];
+  hashtags: string[];
+  pendingRequests: string[];
   engagement?: {
     topLikes: { user: string; count: number }[];
     totalLikes: number;
@@ -63,7 +69,13 @@ function normalizeStoredInstagramData(input: unknown): InstagramData | null {
   const processedAt = safeNumber(obj.processedAt, NaN);
   if (!Number.isFinite(processedAt)) return null;
 
-  const pendingRequests = obj.pendingRequests ? safeStringArray(obj.pendingRequests) : undefined;
+  const blocked = safeStringArray(obj.blocked);
+  const restricted = safeStringArray(obj.restricted);
+  const recentlyUnfollowed = safeStringArray(obj.recentlyUnfollowed);
+  const recentRequests = safeStringArray(obj.recentRequests);
+  const removedSuggestions = safeStringArray(obj.removedSuggestions);
+  const hashtags = safeStringArray(obj.hashtags);
+  const pendingRequests = safeStringArray(obj.pendingRequests);
 
   const engagementRaw = obj.engagement as any;
   const topLikesRaw = engagementRaw?.topLikes;
@@ -95,6 +107,12 @@ function normalizeStoredInstagramData(input: unknown): InstagramData | null {
   return {
     followers,
     following,
+    blocked,
+    restricted,
+    recentlyUnfollowed,
+    recentRequests,
+    removedSuggestions,
+    hashtags,
     pendingRequests,
     engagement,
     activity,
