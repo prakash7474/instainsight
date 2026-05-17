@@ -15,9 +15,11 @@ import Svg, { Circle, G, Path, Text as SvgText } from 'react-native-svg';
 import { useRouter } from 'expo-router';
 
 import { useInstagramAnalyticsData } from '@/hooks/useInstagramAnalyticsData';
+import { useInstagramData } from '@/hooks/useInstagramData';
 import type { Analytics } from '@/utils/instagramAnalyticsUtils';
 import type { ExtractedMedia } from '@/utils/mediaTypes';
 import { buildAnalytics } from '@/utils/instagramAnalyticsUtils';
+import { DEVICE_ICONS, DEVICE_COLORS } from '@/utils/instagram';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
@@ -340,10 +342,173 @@ function ErrorState({
   );
 }
 
+function ActivityContent() {
+  const activity = useInstagramData();
+  const s = activity.summary;
+
+  const infoCards = [
+    { label: 'Logins', value: s.totalLogins, icon: 'log-in', color: '#00E676' },
+    { label: 'Logouts', value: s.totalLogouts, icon: 'log-out', color: '#FF5252' },
+    { label: 'Post Cmts', value: s.totalPostComments, icon: 'chatbubble', color: '#7C4DFF' },
+    { label: 'Reel Cmts', value: s.totalReelComments, icon: 'play', color: '#E040FB' },
+    { label: 'Polls', value: s.totalPolls, icon: 'stats-chart', color: '#FFC107' },
+    { label: 'Questions', value: s.totalQuestions, icon: 'help-circle', color: '#5DCAA5' },
+  ];
+
+  const maxTimeline = Math.max(
+    ...activity.timeline.map(m =>
+      m.postComments + m.reelComments + m.polls + m.questions + m.logins
+    ),
+    1,
+  );
+
+  const deviceEntries = Object.entries(activity.deviceCounts).sort(
+    (a, b) => b[1] - a[1],
+  );
+  const maxDevice = deviceEntries[0]?.[1] ?? 1;
+
+  return (
+    <ScrollView contentContainerStyle={activityStyles.scroll} showsVerticalScrollIndicator={false}>
+      {/* Summary cards */}
+      <Text style={activityStyles.sectionTitle}>Usage Summary</Text>
+      <View style={activityStyles.cardGrid}>
+        {infoCards.map(c => (
+          <View key={c.label} style={activityStyles.summaryCard}>
+            <Ionicons name={c.icon as any} size={16} color={c.color} />
+            <Text style={[activityStyles.summaryValue, { color: c.color }]}>
+              {c.value.toLocaleString()}
+            </Text>
+            <Text style={activityStyles.summaryLabel}>{c.label}</Text>
+          </View>
+        ))}
+      </View>
+
+      {/* Monthly Timeline */}
+      {activity.timeline.length > 0 && (
+        <View style={activityStyles.card}>
+          <Text style={activityStyles.cardTitle}>Monthly Timeline</Text>
+          {activity.timeline.map(m => {
+            const total = m.postComments + m.reelComments + m.polls + m.questions + m.logins;
+            const pct = total / maxTimeline;
+            return (
+              <View key={m.month} style={activityStyles.timelineRow}>
+                <Text style={activityStyles.monthLabel}>{m.label}</Text>
+                <View style={activityStyles.timelineTrack}>
+                  <View style={[activityStyles.timelineFill, { width: `${pct * 100}%` }]} />
+                </View>
+                <Text style={activityStyles.timelineCount}>{total}</Text>
+              </View>
+            );
+          })}
+        </View>
+      )}
+
+      {/* Device Breakdown */}
+      {deviceEntries.length > 0 && (
+        <View style={activityStyles.card}>
+          <Text style={activityStyles.cardTitle}>Devices Used</Text>
+          {deviceEntries.map(([device, count]) => (
+            <View key={device} style={activityStyles.timelineRow}>
+              <Ionicons
+                name={(DEVICE_ICONS[device] || 'devices') as any}
+                size={16}
+                color={DEVICE_COLORS[device] || '#888'}
+              />
+              <Text style={[activityStyles.deviceName, { color: DEVICE_COLORS[device] || '#DDD' }]}>
+                {device}
+              </Text>
+              <View style={activityStyles.timelineTrack}>
+                <View
+                  style={[
+                    activityStyles.timelineFill,
+                    {
+                      width: `${(count / maxDevice) * 100}%`,
+                      backgroundColor: DEVICE_COLORS[device] || '#888',
+                    },
+                  ]}
+                />
+              </View>
+              <Text style={activityStyles.timelineCount}>{count}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* Top Combined Users */}
+      {activity.topCombined.length > 0 && (
+        <View style={activityStyles.card}>
+          <Text style={activityStyles.cardTitle}>Top Interacted Users</Text>
+          {activity.topCombined.slice(0, 10).map((u, i) => (
+            <View key={u.user} style={activityStyles.userRow}>
+              <Text style={activityStyles.rank}>#{i + 1}</Text>
+              <Text style={activityStyles.userName}>@{u.user}</Text>
+              <Text style={activityStyles.interactionCount}>
+                {u.total.toLocaleString()} interactions
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* Login History */}
+      {activity.loginHistory.length > 0 && (
+        <View style={activityStyles.card}>
+          <Text style={activityStyles.cardTitle}>Login History</Text>
+          {activity.loginHistory.slice(0, 20).map((entry, i) => (
+            <View key={i} style={activityStyles.loginRow}>
+              <Ionicons
+                name={(DEVICE_ICONS[entry.device] || 'devices') as any}
+                size={14}
+                color={DEVICE_COLORS[entry.device] || '#888'}
+              />
+              <View style={{ flex: 1 }}>
+                <Text style={activityStyles.loginTime}>{entry.time}</Text>
+                <Text style={activityStyles.loginMeta}>
+                  {entry.device}{entry.ip ? ` · ${entry.ip}` : ''}
+                </Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+
+const activityStyles = StyleSheet.create({
+  scroll: { paddingBottom: 24 },
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: '#fff', marginBottom: 14, marginTop: 4 },
+  cardGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 20 },
+  summaryCard: {
+    width: '31%', backgroundColor: '#1A1A2E', borderRadius: 14, padding: 12,
+    borderWidth: 1, borderColor: '#2A2A40', gap: 6, alignItems: 'center',
+  },
+  summaryValue: { fontSize: 18, fontWeight: '800' },
+  summaryLabel: { fontSize: 10, color: '#888' },
+  card: {
+    backgroundColor: '#1A1A2E', borderRadius: 20, padding: 18,
+    borderWidth: 1, borderColor: '#2A2A40', marginBottom: 16,
+  },
+  cardTitle: { fontSize: 15, fontWeight: '700', color: '#fff', marginBottom: 14 },
+  timelineRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 8 },
+  monthLabel: { width: 52, fontSize: 11, color: '#888', fontWeight: '600' },
+  timelineTrack: { flex: 1, height: 14, backgroundColor: '#2A2A40', borderRadius: 4, overflow: 'hidden' },
+  timelineFill: { height: '100%', borderRadius: 4, backgroundColor: '#00E676' },
+  timelineCount: { width: 32, textAlign: 'right', fontSize: 11, color: '#888' },
+  deviceName: { width: 80, fontSize: 11, fontWeight: '600' },
+  userRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#2A2A4044', gap: 10 },
+  rank: { width: 26, color: '#E040FB', fontWeight: '800', fontSize: 12 },
+  userName: { flex: 1, color: '#DDD', fontSize: 13, fontWeight: '500' },
+  interactionCount: { color: '#666', fontSize: 11, backgroundColor: '#222', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  loginRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#2A2A4044', gap: 10 },
+  loginTime: { color: '#DDD', fontSize: 12, fontWeight: '500' },
+  loginMeta: { color: '#666', fontSize: 10, marginTop: 2 },
+});
+
 export default function DashboardScreen() {
   const router = useRouter();
 
-  const { loading, errorMsg, data, stats } = useInstagramAnalyticsData();
+  const { loading, errorMsg, data, stats, mediaStore } = useInstagramAnalyticsData();
 
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
 
@@ -385,10 +550,41 @@ export default function DashboardScreen() {
   }, [data]);
 
 
-  const mostActiveMonthLabel = useMemo(() => {
-    // Media intelligence not wired in this migration yet.
-    return '—';
-  }, []);
+  const mediaInsights = useMemo(() => {
+    const stories = mediaStore?.stories;
+    const posts = mediaStore?.posts;
+    if (!stories && !posts) return null;
+
+    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+    const allMonths = new Set<string>();
+    if (stories) Object.keys(stories).forEach(m => allMonths.add(m));
+    if (posts) Object.keys(posts).forEach(m => allMonths.add(m));
+
+    // Most active month from stories
+    let maxStories = 0;
+    let maxMonth = '';
+    if (stories) {
+      Object.entries(stories).forEach(([month, items]) => {
+        const count = items.length;
+        if (count > maxStories) { maxStories = count; maxMonth = month; }
+      });
+    }
+
+    const totalStories = stories ? Object.values(stories).reduce((a, b) => a + b.length, 0) : 0;
+    const totalPosts = posts ? Object.values(posts).reduce((a, b) => a + b.length, 0) : 0;
+    const monthsWithData = allMonths.size;
+
+    let activeLabel = '—';
+    if (maxMonth) {
+      const [y, m] = maxMonth.split('-');
+      activeLabel = `${monthNames[+m - 1]}'${y.slice(2)} (${maxStories} stories)`;
+    }
+
+    return { totalStories, totalPosts, monthsWithData, activeLabel };
+  }, [mediaStore]);
+
+  const mostActiveMonthLabel = mediaInsights?.activeLabel ?? '—';
 
 
   const pieData = useMemo(() => {
@@ -411,6 +607,7 @@ export default function DashboardScreen() {
       pending: toUsers(data.pendingRequests ?? []),
       blocked: toUsers(data.blocked ?? []),
       restricted: toUsers(data.restricted ?? []),
+      closeFriends: toUsers(data.closeFriends ?? []),
       recentlyUnfollowed: toUsers(data.recentlyUnfollowed ?? []),
       removedSuggestions: toUsers(data.removedSuggestions ?? []),
       recentFollowRequests: toUsers(data.recentRequests ?? []),
@@ -514,7 +711,18 @@ export default function DashboardScreen() {
           </View>
 
           <View style={styles.mediaStatsGrid}>
-            {/* Counts intentionally hidden for now */}
+            <View style={styles.mediaStatChip}>
+              <Text style={styles.mediaStatValue}>{mediaInsights?.totalStories ?? 0}</Text>
+              <Text style={styles.mediaStatLabel}>Stories</Text>
+            </View>
+            <View style={styles.mediaStatChip}>
+              <Text style={styles.mediaStatValue}>{mediaInsights?.totalPosts ?? 0}</Text>
+              <Text style={styles.mediaStatLabel}>Posts</Text>
+            </View>
+            <View style={styles.mediaStatChip}>
+              <Text style={styles.mediaStatValue}>{mediaInsights?.monthsWithData ?? 0}</Text>
+              <Text style={styles.mediaStatLabel}>Months</Text>
+            </View>
           </View>
 
           <View style={styles.mediaMetaRow}>
@@ -711,32 +919,7 @@ export default function DashboardScreen() {
         )}
 
         {/* Activity tab */}
-        {activeTab === 'activity' && (
-          <View style={styles.fadeContainer}>
-            <View style={styles.chartCard}>
-              <Ionicons name="time" size={40} color="#00E676" style={{ marginBottom: 12 }} />
-              <Text style={styles.chartTitle}>Usage Summary</Text>
-              <Text style={styles.statValue}>{data.activity?.loginHistory?.length ?? 0}</Text>
-              <Text style={styles.statLabel}>Total App Logins Recorded</Text>
-            </View>
-
-            <View style={styles.actionsCard}>
-              <Text style={styles.chartTitle}>📅 Activity Timeline</Text>
-              <Text style={styles.cardSub}>Account interactions over time (last 10 events)</Text>
-
-              {data.activity?.loginHistory?.length ? (
-                data.activity.loginHistory.slice(0, 10).map((ts, i) => (
-                  <View key={i} style={styles.actionRow}>
-                    <Ionicons name="flash-outline" size={16} color="#00E676" />
-                    <Text style={styles.actionLabel}>{new Date(ts).toLocaleString()}</Text>
-                  </View>
-                ))
-              ) : (
-                <Text style={styles.emptyNote}>Activity data not included in export.</Text>
-              )}
-            </View>
-          </View>
-        )}
+        {activeTab === 'activity' && <ActivityContent />}
 
         <TouchableOpacity style={styles.reimportBtn} onPress={() => router.push('/upload')}>
           <Ionicons name="refresh" size={18} color="#E040FB" />
@@ -837,6 +1020,12 @@ const styles = StyleSheet.create({
   mediaSubtitle: { color: '#888', fontSize: 12, marginTop: 3 },
 
   mediaStatsGrid: { flexDirection: 'row', gap: 12, marginBottom: 14 },
+  mediaStatChip: {
+    flex: 1, backgroundColor: '#0F0F1A', borderRadius: 14, padding: 12,
+    borderWidth: 1, borderColor: '#2A2A40', alignItems: 'center', gap: 4,
+  },
+  mediaStatValue: { fontSize: 18, fontWeight: '800', color: '#fff' },
+  mediaStatLabel: { fontSize: 11, color: '#888', fontWeight: '600' },
   mediaMetaRow: { marginBottom: 14 },
   mediaMetaChip: { borderWidth: 1, borderRadius: 16, padding: 14, backgroundColor: '#0F0F1A' },
   mediaMetaLabel: { color: '#888', fontSize: 12, fontWeight: '700' },

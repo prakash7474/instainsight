@@ -15,14 +15,18 @@
     "hooks/**/*.ts",
     "hooks/**/*.tsx",
     "utils/**/*.ts",
-    "utils/**/*.tsx"
+    "utils/**/*.tsx",
+    "types/**/*.ts",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts"
   ],
   "exclude": [
     "node_modules",
     "babel.config.js",
     "metro.config.js",
+    "jest.config.js",
     "dist",
     "build",
-    "*.js"
+    "**/*.js"
   ]
 }

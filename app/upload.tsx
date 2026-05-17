@@ -151,6 +151,7 @@ export default function UploadScreen() {
                 following,
                 blocked: insights.blocked,
                 restricted: insights.restricted,
+                closeFriends: insights.closeFriends,
                 recentlyUnfollowed: insights.recentlyUnfollowed,
                 recentRequests: insights.recentRequests,
                 removedSuggestions: insights.removedSuggestions,
@@ -222,6 +223,50 @@ export default function UploadScreen() {
         return [];
     };
 
+    const FIELD_LABELS = new Set(['Name','URL','Caption','Owner','Username','Hashtags',
+      'Instagram','Followers','Following','Date','Type']);
+
+    const extractUsernamesWithCounts = (html: string): Record<string, number> => {
+        const counts: Record<string, number> = {};
+
+        // Try 1: anchor tags with instagram.com profile links (older export format)
+        const anchorRegex = /<a [^>]*href="https:\/\/www\.instagram\.com\/([^"\/]+)\/?"[^>]*>([^<]+)<\/a>/gi;
+        let match;
+        while ((match = anchorRegex.exec(html)) !== null) {
+            const username = (match[1] || match[2]).trim();
+            if (username && username.length > 0 && !FIELD_LABELS.has(username)) {
+                counts[username] = (counts[username] || 0) + 1;
+            }
+        }
+
+        if (Object.keys(counts).length > 0) return counts;
+
+        // Try 2: newer export — find <h2>Owner</h2> sections, extract username after "Username" label
+        const ownerSectionRegex = /<h2>Owner<\/h2>([\s\S]*?)(?=<h2>|$)/gi;
+        while ((match = ownerSectionRegex.exec(html)) !== null) {
+            const section = match[1];
+            const userMatch = section.match(/Username\s*([^\s<]+)/);
+            if (userMatch) {
+                const username = userMatch[1].trim();
+                if (username && !FIELD_LABELS.has(username)) {
+                    counts[username] = (counts[username] || 0) + 1;
+                }
+            }
+        }
+
+        if (Object.keys(counts).length > 0) return counts;
+
+        // Try 3: fallback — >text< pattern, but exclude field labels
+        const simpleRegex = />([a-zA-Z0-9._]{2,30})</g;
+        while ((match = simpleRegex.exec(html)) !== null) {
+            const val = match[1].trim();
+            if (!FIELD_LABELS.has(val)) {
+                counts[val] = (counts[val] || 0) + 1;
+            }
+        }
+        return counts;
+    };
+
     const extractEngagementData = async (zip: JSZip) => {
         const result = {
             topLikes: [] as { user: string; count: number }[],
@@ -230,36 +275,71 @@ export default function UploadScreen() {
         };
 
         try {
-            // Parse Likes (Users you liked most)
-            const likesPaths = ['likes/liked_posts.html', 'likes.json'];
+            // Parse Likes — try JSON first, fall back to HTML
+            // Instagram puts liked posts at likes/liked_posts.json (or .html)
+            const likesPaths = [
+                'likes/liked_posts.json',
+                'likes.json',
+                'likes/liked_posts.html',
+                'likes.html',
+            ];
             const likesContent = await getZipFileContent(zip, likesPaths);
             if (likesContent) {
-                const likesData = JSON.parse(likesContent);
                 const userCounts: Record<string, number> = {};
-                const list = Array.isArray(likesData) ? likesData : (likesData.likes_media_likes || []);
+                const isHtml = likesContent.trim().charAt(0) === '<';
 
-                list.forEach((item: any) => {
-                    result.totalLikes++;
-                    // Try to find username in string_list_data
-                    const username = item?.string_list_data?.[0]?.value || item?.title;
-                    if (username && typeof username === 'string') {
-                        userCounts[username] = (userCounts[username] || 0) + 1;
-                    }
-                });
+                if (isHtml) {
+                    const htmlCounts = extractUsernamesWithCounts(likesContent);
+                    Object.assign(userCounts, htmlCounts);
+                } else {
+                    const likesData = JSON.parse(likesContent);
+                    const list = Array.isArray(likesData)
+                        ? likesData
+                        : (likesData.likes_media_likes || []);
 
+                    list.forEach((item: any) => {
+                        const username =
+                            item?.string_list_data?.[0]?.value || item?.title;
+                        if (username && typeof username === 'string') {
+                            userCounts[username] = (userCounts[username] || 0) + 1;
+                        }
+                    });
+                }
+
+                result.totalLikes = Object.values(userCounts).reduce((a, b) => a + b, 0);
                 result.topLikes = Object.entries(userCounts)
                     .map(([user, count]) => ({ user, count }))
                     .sort((a, b) => b.count - a.count)
                     .slice(0, 10);
             }
 
-            // Parse Comments
-            const commsPaths = ['comments/post_comments.html', 'comments.json'];
+            // Parse Comments — try JSON first, fall back to HTML
+            const commsPaths = [
+                'comments/comments.json',
+                'comments/post_comments.json',
+                'post_comments.json',
+                'comments/comments.html',
+                'comments/post_comments.html',
+                'post_comments.html',
+                'comments.html',
+            ];
             const commsContent = await getZipFileContent(zip, commsPaths);
             if (commsContent) {
-                const commsData = JSON.parse(commsContent);
-                const list = Array.isArray(commsData) ? commsData : (commsData.comments_media_comments || []);
-                result.totalComments = list.length;
+                const isHtml = commsContent.trim().charAt(0) === '<';
+
+                if (isHtml) {
+                    const htmlCounts = extractUsernamesWithCounts(commsContent);
+                    result.totalComments = Object.values(htmlCounts).reduce(
+                        (a, b) => a + b,
+                        0,
+                    );
+                } else {
+                    const commsData = JSON.parse(commsContent);
+                    const list = Array.isArray(commsData)
+                        ? commsData
+                        : (commsData.comments_media_comments || []);
+                    result.totalComments = list.length;
+                }
             }
         } catch (e) {
             console.log('Engagement parsing failed (non-critical):', e);
@@ -273,18 +353,34 @@ export default function UploadScreen() {
         };
 
         try {
-            const path = ['account_history/login_history.html', 'login_history.html'];
+            // Try JSON first, fall back to HTML
+            const path = [
+                'account_history/login_history.json',
+                'login_history.json',
+                'account_history/login_history.html',
+                'login_history.html',
+            ];
             const content = await getZipFileContent(zip, path);
             if (content) {
-                const data = JSON.parse(content);
-                const list = data?.login_history || data || [];
-                if (Array.isArray(list)) {
-                    result.loginHistory = list
-                        .map((item: any) => {
-                            const ts = item?.string_list_data?.[0]?.timestamp || item?.timestamp;
-                            return ts ? ts * 1000 : null;
-                        })
-                        .filter(Boolean) as number[];
+                const isHtml = content.trim().charAt(0) === '<';
+                if (isHtml) {
+                    // HTML version — not easily parseable into timestamps; skip
+                    console.log(
+                        'Activity data is HTML format, timestamps not extracted',
+                    );
+                } else {
+                    const data = JSON.parse(content);
+                    const list = data?.login_history || data || [];
+                    if (Array.isArray(list)) {
+                        result.loginHistory = list
+                            .map((item: any) => {
+                                const ts =
+                                    item?.string_list_data?.[0]?.timestamp ||
+                                    item?.timestamp;
+                                return ts ? ts * 1000 : null;
+                            })
+                            .filter(Boolean) as number[];
+                    }
                 }
             }
         } catch (e) {
@@ -402,7 +498,8 @@ export default function UploadScreen() {
                         'Open Instagram → Profile → ☰ Menu',
                         'Tap "Your Activity" → "Download your data"',
                         'Select "Download or transfer information"',
-                        'Choose "JSON" format and request download',
+                        'Choose HTML format and request download',
+                        'choose the all time data range for a complete export',
                         'Download the ZIP from your email and import here',
                     ].map((step, i) => (
                         <View key={i} style={styles.instructionRow}>
