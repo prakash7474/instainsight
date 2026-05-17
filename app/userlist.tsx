@@ -21,6 +21,7 @@ interface InstagramData {
     following: string[];
     blocked: string[];
     restricted: string[];
+    closeFriends: string[];
     recentlyUnfollowed: string[];
     recentRequests: string[];
     removedSuggestions: string[];
@@ -52,6 +53,7 @@ const TYPE_LABELS: Record<string, string> = {
     following: 'All Following',
     blocked: 'Blocked Profiles',
     restricted: 'Restricted Profiles',
+    closefriends: 'Close Friends',
     recentlyunfollowed: 'Recently Unfollowed',
     recentrequests: 'Recent Follow Requests',
     removedsuggestions: 'Removed Suggestions',
@@ -67,6 +69,7 @@ const TYPE_COLORS: Record<string, string> = {
     following: '#7C4DFF',
     blocked: '#FF5252',
     restricted: '#E040FB',
+    closefriends: '#00E676',
     recentlyunfollowed: '#7C4DFF',
     recentrequests: '#FFC107',
     removedsuggestions: '#9E9E9E',
@@ -82,6 +85,7 @@ const TYPE_ICONS: Record<string, string> = {
     following: 'person-add',
     blocked: 'stop-circle-outline',
     restricted: 'lock-closed-outline',
+    closefriends: 'heart-circle-outline',
     recentlyunfollowed: 'person-remove-outline',
     recentrequests: 'time-outline',
     removedsuggestions: 'trash-outline',
@@ -203,6 +207,7 @@ export default function UserListScreen() {
                     following: Array.isArray(parsed.following) ? parsed.following : [],
                     blocked: Array.isArray(parsed.blocked) ? parsed.blocked : [],
                     restricted: Array.isArray(parsed.restricted) ? parsed.restricted : [],
+                    closeFriends: Array.isArray(parsed.closeFriends) ? parsed.closeFriends : [],
                     recentlyUnfollowed: Array.isArray(parsed.recentlyUnfollowed) ? parsed.recentlyUnfollowed : [],
                     recentRequests: Array.isArray(parsed.recentRequests) ? parsed.recentRequests : [],
                     removedSuggestions: Array.isArray(parsed.removedSuggestions) ? parsed.removedSuggestions : [],
@@ -250,7 +255,7 @@ export default function UserListScreen() {
             case 'hashtags':
                 return data.hashtags;
             case 'closefriends':
-                return [];
+                return data.closeFriends;
             default:
                 return [];
         }

@@ -5,6 +5,7 @@ export interface ParsedInsights {
   following: string[];
   blocked: string[];
   restricted: string[];
+  closeFriends: string[];
   recentlyUnfollowed: string[];
   recentRequests: string[];
   removedSuggestions: string[];
@@ -71,7 +72,7 @@ async function findAndParse(
 export async function parseInstagramZip(zip: JSZip): Promise<ParsedInsights> {
   const p = FOLLOWERS_FOLLOWING_PREFIX;
 
-  const [followers, following, blocked, restricted, recentlyUnfollowed, recentRequests, removedSuggestions, hashtags, pendingRequests] = await Promise.all([
+  const [followers, following, blocked, restricted, closeFriends, recentlyUnfollowed, recentRequests, removedSuggestions, hashtags, pendingRequests] = await Promise.all([
     findAndParse(zip, [
       `${p}followers_1.html`,
       `${p}followers_1.json`,
@@ -87,6 +88,9 @@ export async function parseInstagramZip(zip: JSZip): Promise<ParsedInsights> {
     ], extractUsernamesFromHtml),
     findAndParse(zip, [
       `${p}restricted_profiles.html`,
+    ], extractUsernamesFromHtml),
+    findAndParse(zip, [
+      `${p}close_friends.html`,
     ], extractUsernamesFromHtml),
     findAndParse(zip, [
       `${p}recently_unfollowed_profiles.html`,
@@ -110,6 +114,7 @@ export async function parseInstagramZip(zip: JSZip): Promise<ParsedInsights> {
     following,
     blocked,
     restricted,
+    closeFriends,
     recentlyUnfollowed,
     recentRequests,
     removedSuggestions,

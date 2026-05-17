@@ -62,7 +62,7 @@ export default function BrowserScreen() {
         // 1. LOGIN REQUIRED
         if (lowUrl.includes('login') || (lowUrl === INSTAGRAM_HOME && !isLoggedIn)) {
             newState = {
-                message: '🔐 Please login to your Instagram account',
+                message: 'Please login to your Instagram account',
                 icon: 'lock-closed-outline',
                 step: 'Login',
                 progress: 0.1,
@@ -88,7 +88,7 @@ export default function BrowserScreen() {
         // 3. INFO PAGE
         else if (lowUrl.includes('accountscenter.instagram.com/info_and_permissions/') && !lowUrl.includes('dyi')) {
             newState = {
-                message: "📂 Tap 'Download your information'",
+                message: "Tap 'Download your information'",
                 icon: 'folder-open-outline',
                 step: 'Info',
                 progress: 0.5,
@@ -98,21 +98,21 @@ export default function BrowserScreen() {
         else if (lowUrl.includes('dyi') || text.includes('request submitted') || text.includes('pending')) {
             if (text.includes('request submitted') || text.includes('pending') || text.includes('in progress')) {
                 newState = {
-                    message: "⏳ Request submitted. Please wait...",
+                    message: "Request submitted. Please wait...",
                     icon: 'hourglass-outline',
                     step: 'Wait',
                     progress: 0.85,
                 };
             } else if (text.includes('download') && !text.includes('create')) {
                 newState = {
-                    message: "📥 Tap Download and save ZIP file",
+                    message: "Tap Download and save ZIP file",
                     icon: 'download-outline',
                     step: 'Download',
                     progress: 0.95,
                 };
             } else if (text.includes('password')) {
                 newState = {
-                    message: "🔐 Enter password to confirm",
+                    message: "Enter password to confirm",
                     icon: 'key-outline',
                     step: 'Export',
                     progress: 0.8,
@@ -120,7 +120,7 @@ export default function BrowserScreen() {
             } else {
                 const isFirstExport = guide.step !== 'Export';
                 newState = {
-                    message: "📤 Tap 'Create Export'",
+                    message: "Tap 'Create Export'",
                     icon: 'paper-plane-outline',
                     step: 'Export',
                     progress: 0.7,
@@ -133,7 +133,7 @@ export default function BrowserScreen() {
         // FALLBACK
         else if (!lowUrl.includes('accountscenter')) {
             newState = {
-                message: "🔐 Login required to continue",
+                message: "Login required to continue",
                 icon: 'log-in-outline',
                 step: 'Login',
                 progress: 0.15,

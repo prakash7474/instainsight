@@ -21,6 +21,7 @@ export type InstagramData = {
   following: string[];
   blocked: string[];
   restricted: string[];
+  closeFriends: string[];
   recentlyUnfollowed: string[];
   recentRequests: string[];
   removedSuggestions: string[];
@@ -71,6 +72,7 @@ function normalizeStoredInstagramData(input: unknown): InstagramData | null {
 
   const blocked = safeStringArray(obj.blocked);
   const restricted = safeStringArray(obj.restricted);
+  const closeFriends = safeStringArray(obj.closeFriends);
   const recentlyUnfollowed = safeStringArray(obj.recentlyUnfollowed);
   const recentRequests = safeStringArray(obj.recentRequests);
   const removedSuggestions = safeStringArray(obj.removedSuggestions);
@@ -109,6 +111,7 @@ function normalizeStoredInstagramData(input: unknown): InstagramData | null {
     following,
     blocked,
     restricted,
+    closeFriends,
     recentlyUnfollowed,
     recentRequests,
     removedSuggestions,
