@@ -93,23 +93,37 @@ export default function StoriesScreen() {
           return;
         }
 
-        const renderItems: StoryRenderItem[] = [];
-        for (const entry of entries) {
+        const CONCURRENCY = 8;
+        let allItems: StoryRenderItem[] = [];
+        let firstBatch = true;
+
+        for (let i = 0; i < entries.length && mounted; i += CONCURRENCY) {
+          const batch = entries.slice(i, i + CONCURRENCY);
+          const results = await Promise.all(
+            batch.map(async (entry) => {
+              const uri = await generateStoryUri(zip, entry.path, entry.type);
+              if (!uri) return null;
+              if (typeof uri === 'string' && uri.startsWith('blob:')) {
+                objectUrls.current.add(uri);
+              }
+              return { ...entry, uri };
+            })
+          );
+
           if (!mounted) return;
-          const uri = await generateStoryUri(zip, entry.path, entry.type);
-          if (uri) {
-            if (typeof uri === 'string' && uri.startsWith('blob:')) {
-              objectUrls.current.add(uri);
-            }
-            renderItems.push({ ...entry, uri });
+
+          const valid = results.filter(Boolean) as StoryRenderItem[];
+          allItems = allItems.concat(valid);
+
+          if (firstBatch) {
+            firstBatch = false;
+            if (mounted) setLoading(false);
           }
+
+          if (mounted) setStories([...allItems]);
         }
 
-        console.log('[Stories] Generated URIs:', renderItems.length);
-
-        if (mounted) {
-          setStories(renderItems);
-        }
+        console.log('[Stories] Generated URIs:', allItems.length);
       } catch (e) {
         if (mounted) {
           setError('Failed to load stories. Please re-import.');

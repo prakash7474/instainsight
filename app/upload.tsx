@@ -268,15 +268,11 @@ export default function UploadScreen() {
     };
 
     const extractEngagementData = async (zip: JSZip) => {
-        const result = {
-            topLikes: [] as { user: string; count: number }[],
-            totalLikes: 0,
-            totalComments: 0,
-        };
+        const likesMap: Record<string, number> = {};
+        const commentsMap: Record<string, number> = {};
 
         try {
             // Parse Likes — try JSON first, fall back to HTML
-            // Instagram puts liked posts at likes/liked_posts.json (or .html)
             const likesPaths = [
                 'likes/liked_posts.json',
                 'likes.json',
@@ -285,12 +281,11 @@ export default function UploadScreen() {
             ];
             const likesContent = await getZipFileContent(zip, likesPaths);
             if (likesContent) {
-                const userCounts: Record<string, number> = {};
                 const isHtml = likesContent.trim().charAt(0) === '<';
 
                 if (isHtml) {
                     const htmlCounts = extractUsernamesWithCounts(likesContent);
-                    Object.assign(userCounts, htmlCounts);
+                    Object.assign(likesMap, htmlCounts);
                 } else {
                     const likesData = JSON.parse(likesContent);
                     const list = Array.isArray(likesData)
@@ -301,16 +296,10 @@ export default function UploadScreen() {
                         const username =
                             item?.string_list_data?.[0]?.value || item?.title;
                         if (username && typeof username === 'string') {
-                            userCounts[username] = (userCounts[username] || 0) + 1;
+                            likesMap[username] = (likesMap[username] || 0) + 1;
                         }
                     });
                 }
-
-                result.totalLikes = Object.values(userCounts).reduce((a, b) => a + b, 0);
-                result.topLikes = Object.entries(userCounts)
-                    .map(([user, count]) => ({ user, count }))
-                    .sort((a, b) => b.count - a.count)
-                    .slice(0, 10);
             }
 
             // Parse Comments — try JSON first, fall back to HTML
@@ -329,22 +318,48 @@ export default function UploadScreen() {
 
                 if (isHtml) {
                     const htmlCounts = extractUsernamesWithCounts(commsContent);
-                    result.totalComments = Object.values(htmlCounts).reduce(
-                        (a, b) => a + b,
-                        0,
-                    );
+                    Object.assign(commentsMap, htmlCounts);
                 } else {
                     const commsData = JSON.parse(commsContent);
                     const list = Array.isArray(commsData)
                         ? commsData
                         : (commsData.comments_media_comments || []);
-                    result.totalComments = list.length;
+
+                    list.forEach((item: any) => {
+                        const username =
+                            item?.string_list_data?.[0]?.value || item?.title;
+                        if (username && typeof username === 'string') {
+                            commentsMap[username] = (commentsMap[username] || 0) + 1;
+                        }
+                    });
                 }
             }
         } catch (e) {
             console.log('Engagement parsing failed (non-critical):', e);
         }
-        return result;
+
+        // Merge likes + comments into combined list
+        const allUsers = new Set([...Object.keys(likesMap), ...Object.keys(commentsMap)]);
+        const combined: { user: string; likedPosts: number; likedComments: number; total: number }[] = [];
+        for (const user of allUsers) {
+            const likedPosts = likesMap[user] || 0;
+            const likedComments = commentsMap[user] || 0;
+            combined.push({ user, likedPosts, likedComments, total: likedPosts + likedComments });
+        }
+        combined.sort((a, b) => b.total - a.total);
+
+        const totalLikes = Object.values(likesMap).reduce((a, b) => a + b, 0);
+        const totalComments = Object.values(commentsMap).reduce((a, b) => a + b, 0);
+
+        return {
+            topLikes: Object.entries(likesMap)
+                .map(([user, count]) => ({ user, count }))
+                .sort((a, b) => b.count - a.count)
+                .slice(0, 10),
+            topCombined: combined.slice(0, 10),
+            totalLikes,
+            totalComments,
+        };
     };
 
     const extractActivityData = async (zip: JSZip) => {

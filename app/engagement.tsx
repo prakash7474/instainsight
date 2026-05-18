@@ -1,31 +1,34 @@
-import { useState } from 'react';
-import { ScrollView, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { useMemo } from 'react';
+import { ScrollView, View, Text, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { useInstagramData } from '../hooks/useInstagramData';
+import { useInstagramAnalyticsData } from '../hooks/useInstagramAnalyticsData';
 import { EngagementBar } from '../components/EngagementBar';
 
-type Tab = 'posts' | 'comments' | 'combined';
-
 export default function EngagementScreen() {
-  const data = useInstagramData();
-  const [tab, setTab] = useState<Tab>('posts');
+  const { data } = useInstagramAnalyticsData();
 
-  const tabs: { key: Tab; label: string }[] = [
-    { key: 'posts', label: 'Liked Posts' },
-    { key: 'comments', label: 'Liked Comments' },
-    { key: 'combined', label: 'Combined' },
-  ];
+  const topLikes = data?.engagement?.topLikes ?? [];
+  const totalLikes = data?.engagement?.totalLikes ?? 0;
+  const totalComments = data?.engagement?.totalComments ?? 0;
 
-  const currentList =
-    tab === 'posts'
-      ? data.topLikedPostUsers
-      : tab === 'comments'
-        ? data.topLikedCmtUsers
-        : data.topCombined.map((u) => ({ user: u.user, count: u.total }));
+  const maxCount = useMemo(() => Math.max(...topLikes.map(u => u.count), 1), [topLikes]);
 
-  const maxCount = currentList[0]?.count ?? 1;
-  const barColor = tab === 'posts' ? '#7C4DFF' : tab === 'comments' ? '#00E676' : '#E040FB';
+  if (!data) {
+    return (
+      <View style={styles.container}>
+        <LinearGradient
+          colors={['#0F0F1A', '#1A0A2E', '#0F0F1A']}
+          style={StyleSheet.absoluteFillObject}
+        />
+        <View style={styles.emptyState}>
+          <Ionicons name="heart-dislike" size={48} color="#444" />
+          <Text style={styles.emptyTitle}>No Engagement Data</Text>
+          <Text style={styles.emptySub}>Import your Instagram ZIP to see engagement insights</Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -47,44 +50,35 @@ export default function EngagementScreen() {
             <Ionicons name="heart" size={18} color="#E040FB" />
             <Text style={styles.cardLabel}>Liked Posts</Text>
             <Text style={styles.cardValue}>
-              {data.summary.totalLikedPosts.toLocaleString()}
+              {totalLikes.toLocaleString()}
             </Text>
           </View>
           <View style={styles.card}>
             <Ionicons name="chatbubble" size={18} color="#00E676" />
-            <Text style={styles.cardLabel}>Liked Comments</Text>
+            <Text style={styles.cardLabel}>Comments</Text>
             <Text style={styles.cardValue}>
-              {data.summary.totalLikedComments.toLocaleString()}
+              {totalComments.toLocaleString()}
             </Text>
           </View>
         </View>
 
-        <View style={styles.tabs}>
-          {tabs.map((t) => (
-            <TouchableOpacity
-              key={t.key}
-              style={[styles.tab, tab === t.key && styles.tabActive]}
-              onPress={() => setTab(t.key)}
-            >
-              <Text
-                style={[styles.tabText, tab === t.key && styles.tabTextActive]}
-              >
-                {t.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        <View style={styles.barList}>
-          {currentList.map((item) => (
-            <EngagementBar
-              key={item.user}
-              user={item.user}
-              count={item.count}
-              maxCount={maxCount}
-              color={barColor}
-            />
-          ))}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Top Liked Posts Users</Text>
+          {topLikes.length > 0 ? (
+            <View style={styles.barList}>
+              {topLikes.map((item) => (
+                <EngagementBar
+                  key={item.user}
+                  user={item.user}
+                  count={item.count}
+                  maxCount={maxCount}
+                  color="#7C4DFF"
+                />
+              ))}
+            </View>
+          ) : (
+            <Text style={styles.emptyNote}>No liked post data found in your export.</Text>
+          )}
         </View>
       </ScrollView>
     </View>
@@ -109,19 +103,11 @@ const styles = StyleSheet.create({
   },
   cardLabel: { fontSize: 12, color: '#888' },
   cardValue: { fontSize: 24, fontWeight: '500', color: '#fff' },
-  tabs: { flexDirection: 'row', gap: 8, marginBottom: 20 },
-  tab: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 0.5,
-    borderColor: '#2A2A40',
-  },
-  tabActive: {
-    backgroundColor: '#1A1A2E',
-    borderColor: '#E040FB',
-  },
-  tabText: { fontSize: 13, color: '#666' },
-  tabTextActive: { color: '#E040FB', fontWeight: '500' },
+  section: { marginBottom: 20 },
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: '#fff', marginBottom: 14 },
   barList: { gap: 4 },
+  emptyState: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
+  emptyTitle: { fontSize: 20, fontWeight: '700', color: '#fff', marginTop: 16 },
+  emptySub: { fontSize: 14, color: '#666', marginTop: 8, textAlign: 'center' },
+  emptyNote: { color: '#666', fontSize: 13, textAlign: 'center', marginVertical: 20 },
 });

@@ -29,6 +29,7 @@ export type InstagramData = {
   pendingRequests: string[];
   engagement?: {
     topLikes: { user: string; count: number }[];
+    topCombined: { user: string; likedPosts: number; likedComments: number; total: number }[];
     totalLikes: number;
     totalComments: number;
   };
@@ -90,9 +91,22 @@ function normalizeStoredInstagramData(input: unknown): InstagramData | null {
         .filter((x: any) => x.user)
     : [];
 
+  const topCombinedRaw = engagementRaw?.topCombined;
+  const topCombined = Array.isArray(topCombinedRaw)
+    ? topCombinedRaw
+        .map((x: any) => ({
+          user: typeof x?.user === 'string' ? x.user : '',
+          likedPosts: safeNumber(x?.likedPosts, 0),
+          likedComments: safeNumber(x?.likedComments, 0),
+          total: safeNumber(x?.total, 0),
+        }))
+        .filter((x: any) => x.user)
+    : [];
+
   const engagement = engagementRaw
     ? {
         topLikes,
+        topCombined,
         totalLikes: safeNumber(engagementRaw.totalLikes, 0),
         totalComments: safeNumber(engagementRaw.totalComments, 0),
       }
