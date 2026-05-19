@@ -15,6 +15,9 @@ import Svg, { Circle, G, Path, Text as SvgText } from 'react-native-svg';
 import { useRouter } from 'expo-router';
 
 import { useInstagramAnalyticsData } from '@/hooks/useInstagramAnalyticsData';
+import ActivityScreen from '../screens/ActivityScreen';
+import { toActivityData } from '../adapters/toActivityData';
+import type { ActivityData } from '../screens/ActivityScreen';
 import type { Analytics } from '@/utils/instagramAnalyticsUtils';
 import { buildAnalytics } from '@/utils/instagramAnalyticsUtils';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -71,8 +74,10 @@ function CategoryCard({
   );
 }
 
-interface InstagramData {
+type LoginEntry = number;
 
+
+interface InstagramData {
   followers: string[];
   following: string[];
   pendingRequests?: string[];
@@ -83,10 +88,11 @@ interface InstagramData {
     totalComments: number;
   };
   activity?: {
-    loginHistory: number[];
+    loginHistory: LoginEntry[];
   };
   processedAt: number;
 }
+
 
 interface Stats {
   totalFollowers: number;
@@ -116,8 +122,16 @@ function safeNumber(input: unknown, fallback: number): number {
   return typeof input === 'number' && Number.isFinite(input) ? input : fallback;
 }
 
+function extractMonthKey(time: string): string {
+  const m = time.match(/(\w{3})\s+\d+,\s+(\d{4})/);
+  if (!m) return '';
+  const months: Record<string, string> = { Jan:'01', Feb:'02', Mar:'03', Apr:'04', May:'05', Jun:'06', Jul:'07', Aug:'08', Sep:'09', Oct:'10', Nov:'11', Dec:'12' };
+  return `${m[2]}-${months[m[1]] || '00'}`;
+}
+
 function safeInstagramData(input: StoredPayload): InstagramData | null {
   if (!input || typeof input !== 'object') return null;
+
 
   const obj = input as Record<string, unknown>;
   const followers = safeStringArray(obj.followers);
@@ -161,7 +175,6 @@ function safeInstagramData(input: StoredPayload): InstagramData | null {
     followers,
     following,
     pendingRequests,
-    engagement,
     activity,
     processedAt,
   };
@@ -319,127 +332,6 @@ function BarChart({ stats }: { stats: Stats }) {
   );
 }
 
-function ActivityContent({ data }: { data: InstagramData }) {
-  const topCombined = data.engagement?.topCombined?.length
-    ? data.engagement.topCombined
-    : (data.engagement?.topLikes ?? []).map(u => ({
-        user: u.user,
-        likedPosts: u.count,
-        likedComments: 0,
-        total: u.count,
-      }));
-  const loginHistory = data.activity?.loginHistory ?? [];
-
-  const infoCards = [
-    { label: 'Liked Posts', value: data.engagement?.totalLikes ?? 0, icon: 'heart', color: '#E91E63' },
-    { label: 'Comments', value: data.engagement?.totalComments ?? 0, icon: 'chatbubble', color: '#2196F3' },
-  ];
-
-  const maxCount = topCombined[0]?.total ?? 1;
-
-  return (
-    <ScrollView contentContainerStyle={activityStyles.scroll} showsVerticalScrollIndicator={false}>
-      {/* Summary cards */}
-      <Text style={activityStyles.sectionTitle}>Engagement Summary</Text>
-      <View style={activityStyles.cardGrid}>
-        {infoCards.map(c => (
-          <View key={c.label} style={activityStyles.summaryCard}>
-            <Ionicons name={c.icon as any} size={16} color={c.color} />
-            <Text style={[activityStyles.summaryValue, { color: c.color }]}>
-              {c.value.toLocaleString()}
-            </Text>
-            <Text style={activityStyles.summaryLabel}>{c.label}</Text>
-          </View>
-        ))}
-      </View>
-
-      {/* Top Interacted Users */}
-      {topCombined.length > 0 && (
-        <View style={activityStyles.card}>
-          <Text style={activityStyles.cardTitle}>Top Interacted Users</Text>
-          {topCombined.map((u, i) => (
-            <View key={u.user} style={activityStyles.userRow}>
-              <Text style={activityStyles.rank}>#{i + 1}</Text>
-              <Text style={activityStyles.userName}>@{u.user}</Text>
-              <View style={{ flexDirection: 'row', gap: 3 }}>
-                {u.likedPosts > 0 && (
-                  <Text style={activityStyles.tag}>♥{u.likedPosts}</Text>
-                )}
-                {u.likedComments > 0 && (
-                  <Text style={activityStyles.tag}>💬{u.likedComments}</Text>
-                )}
-              </View>
-              <View style={{ width: 70, height: 14, backgroundColor: '#2A2A40', borderRadius: 4, overflow: 'hidden' }}>
-                <View
-                  style={[
-                    activityStyles.timelineFill,
-                    { width: `${(u.total / maxCount) * 100}%`, backgroundColor: '#E91E63' },
-                  ]}
-                />
-              </View>
-              <Text style={activityStyles.timelineCount}>{u.total}</Text>
-            </View>
-          ))}
-        </View>
-      )}
-
-      {/* Login History */}
-      {loginHistory.length > 0 && (
-        <View style={activityStyles.card}>
-          <Text style={activityStyles.cardTitle}>Login History ({loginHistory.length} logins)</Text>
-          {loginHistory.slice(0, 50).map((ts, i) => {
-            const d = new Date(ts);
-            const dateStr = Number.isFinite(d.getTime())
-              ? d.toLocaleDateString('en-US', {
-                  month: 'short', day: 'numeric', year: 'numeric',
-                  hour: '2-digit', minute: '2-digit',
-                })
-              : 'Unknown';
-            return (
-              <View key={i} style={activityStyles.loginRow}>
-                <Ionicons name="log-in" size={14} color="#00E676" />
-                <Text style={activityStyles.loginTime}>{dateStr}</Text>
-              </View>
-            );
-          })}
-        </View>
-      )}
-
-      {topCombined.length === 0 && loginHistory.length === 0 && (
-        <Text style={activityStyles.emptyText}>
-          No activity or engagement data found in your Instagram export.
-        </Text>
-      )}
-    </ScrollView>
-  );
-}
-
-const activityStyles = StyleSheet.create({
-  scroll: { paddingBottom: 24 },
-  sectionTitle: { fontSize: 16, fontWeight: '700', color: '#fff', marginBottom: 14, marginTop: 4 },
-  cardGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 20 },
-  summaryCard: {
-    width: '47%', backgroundColor: '#1A1A2E', borderRadius: 14, padding: 12,
-    borderWidth: 1, borderColor: '#2A2A40', gap: 6, alignItems: 'center',
-  },
-  summaryValue: { fontSize: 18, fontWeight: '800' },
-  summaryLabel: { fontSize: 10, color: '#888' },
-  card: {
-    backgroundColor: '#1A1A2E', borderRadius: 20, padding: 18,
-    borderWidth: 1, borderColor: '#2A2A40', marginBottom: 16,
-  },
-  cardTitle: { fontSize: 15, fontWeight: '700', color: '#fff', marginBottom: 14 },
-  timelineTrack: { flex: 1, height: 14, backgroundColor: '#2A2A40', borderRadius: 4, overflow: 'hidden' },
-  timelineFill: { height: '100%', borderRadius: 4 },
-  timelineCount: { width: 32, textAlign: 'right', fontSize: 11, color: '#888' },
-  userRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#2A2A4044', gap: 10 },
-  rank: { width: 26, color: '#E040FB', fontWeight: '800', fontSize: 12 },
-  userName: { flex: 1, color: '#DDD', fontSize: 13, fontWeight: '500' },
-  loginRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#2A2A4044', gap: 10 },
-  loginTime: { color: '#DDD', fontSize: 12, fontWeight: '500' },
-  emptyText: { color: '#666', fontSize: 14, textAlign: 'center', marginTop: 40 },
-  tag: { color: '#888', fontSize: 10, backgroundColor: '#222', paddingHorizontal: 4, paddingVertical: 1, borderRadius: 3 },
-});
 
 function ErrorState({
   title,
@@ -486,6 +378,7 @@ export default function DashboardScreen() {
       await AsyncStorage.removeItem('instainsight_data');
       await AsyncStorage.removeItem('instainsight_media_v1');
       await AsyncStorage.removeItem('instainsight_media');
+      await AsyncStorage.removeItem('instainsight_dna');
     } catch {
       // ignore
     }
@@ -572,6 +465,95 @@ export default function DashboardScreen() {
     });
   }, [data]);
 
+  const activityData: ActivityData | null = useMemo(() => {
+    if (!data) return null;
+
+    const loginHistoryRaw = data.activity?.loginHistory ?? [];
+    const mappedLogins = loginHistoryRaw.map((item: any) => {
+      if (typeof item === 'number' && Number.isFinite(item)) {
+        const d = new Date(item);
+        const time = Number.isFinite(d.getTime())
+          ? d.toLocaleString('en-US', { month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit' })
+          : 'Unknown';
+        return { time, device:'Unknown', ip:'', monthKey:'' };
+      }
+      if (item && typeof item === 'object') {
+        const monthKey = typeof item.monthKey === 'string' ? item.monthKey : '';
+        const time = typeof item.time === 'string' ? item.time : 'Unknown';
+        return {
+          time,
+          device: typeof item.device === 'string' ? item.device : 'Unknown',
+          ip: typeof item.ip === 'string' ? item.ip : '',
+          monthKey: monthKey || extractMonthKey(time),
+        };
+      }
+      return null;
+    }).filter(Boolean) as { time: string; device: string; ip: string; monthKey: string }[];
+
+    const topCombined = data.engagement?.topCombined?.map(u => ({
+      user: u.user,
+      total: u.total,
+      likedPosts: u.likedPosts,
+      likedComments: u.likedComments,
+      commented: 0,
+    })) ?? [];
+
+    // Build timeline from stored data or derive from login entries
+    let timeline: any[] = (data.activity?.timeline ?? []).map((t: any) => ({
+      month: t.month || '',
+      label: t.label || '',
+      postComments: typeof t.postComments === 'number' ? t.postComments : 0,
+      reelComments: typeof t.reelComments === 'number' ? t.reelComments : 0,
+      polls: typeof t.polls === 'number' ? t.polls : 0,
+      questions: typeof t.questions === 'number' ? t.questions : 0,
+      logins: typeof t.logins === 'number' ? t.logins : 0,
+      likedPosts: typeof t.likedPosts === 'number' ? t.likedPosts : 0,
+    }));
+    if (timeline.length === 0 && mappedLogins.length > 0) {
+      const monthly: Record<string, number> = {};
+      for (const l of mappedLogins) {
+        if (l.monthKey) monthly[l.monthKey] = (monthly[l.monthKey] || 0) + 1;
+      }
+      const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      timeline = Object.entries(monthly)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .slice(-8)
+        .map(([mk, count]) => {
+          const [y, m] = mk.split('-');
+          return {
+            month: mk,
+            label: `${monthNames[parseInt(m) - 1]}'${y.slice(2)}`,
+            postComments: 0, reelComments: 0, polls: 0, questions: 0, logins: count, likedPosts: 0,
+          };
+        });
+    }
+
+    const deviceCounts = data.activity?.deviceCounts ?? {};
+
+    const raw = {
+      summary: {
+        totalLogins: mappedLogins.length,
+        totalPostComments: 0,
+        totalReelComments: 0,
+        totalPolls: 0,
+        totalQuestions: 0,
+        totalLikedPosts: data.engagement?.totalLikes ?? 0,
+        totalLikedComments: data.engagement?.totalComments ?? 0,
+      },
+      loginHistory: mappedLogins,
+      deviceCounts,
+      timeline,
+      topLikedPostUsers: data.engagement?.topLikes?.map(u => ({ user: u.user, count: u.count })) ?? [],
+      topLikedCmtUsers: [],
+      topCommentedOn: [],
+      topCombined,
+      storiesCount: mediaInsights?.totalStories ?? 0,
+      postsCount: mediaInsights?.totalPosts ?? 0,
+      mostActiveMonth: mediaInsights?.activeLabel,
+    };
+
+    return toActivityData(raw as any);
+  }, [data, mediaInsights]);
 
 
   if (loading) {
@@ -602,6 +584,7 @@ export default function DashboardScreen() {
 
   const openGallery = () => router.push('/gallery');
   const openStories = () => router.push('/stories');
+  const openDna = () => router.push('/dna');
 
 
   return (
@@ -706,6 +689,15 @@ export default function DashboardScreen() {
             >
               <Ionicons name="play-circle-outline" size={18} color="#00E676" />
               <Text style={[styles.mediaBtnText, { color: '#00E676' }]}>Stories</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.mediaBtn, { borderColor: '#FFC10755' }]}
+              onPress={openDna}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="git-network-outline" size={18} color="#FFC107" />
+              <Text style={[styles.mediaBtnText, { color: '#FFC107' }]}>DNA</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -876,7 +868,9 @@ export default function DashboardScreen() {
         )}
 
         {/* Activity tab */}
-        {activeTab === 'activity' && <ActivityContent data={data} />}
+        {activeTab === 'activity' && activityData && (
+          <ActivityScreen activity={activityData} />
+        )}
 
         <TouchableOpacity style={styles.reimportBtn} onPress={() => router.push('/upload')}>
           <Ionicons name="refresh" size={18} color="#E040FB" />

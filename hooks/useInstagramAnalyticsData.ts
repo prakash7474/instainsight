@@ -34,7 +34,9 @@ export type InstagramData = {
     totalComments: number;
   };
   activity?: {
-    loginHistory: number[];
+    loginHistory: number[] | { time: string; device: string; ip: string; userAgent: string }[];
+    deviceCounts?: Record<string, number>;
+    timeline?: { month: string; label: string; logins: number }[];
   };
   processedAt: number;
 };
@@ -113,12 +115,82 @@ function normalizeStoredInstagramData(input: unknown): InstagramData | null {
     : undefined;
 
   const activityRaw = obj.activity as any;
+
+  // Expected persisted structure from upload:
+  // activity: { loginHistory: LoginEntry[] | number[] }
   const loginHistoryRaw = activityRaw?.loginHistory;
+
   const loginHistory = Array.isArray(loginHistoryRaw)
-    ? loginHistoryRaw.map((ts: unknown) => (typeof ts === 'number' && Number.isFinite(ts) ? ts : null)).filter(Boolean)
+    ? loginHistoryRaw
+        .map((item: any) => {
+          // Prefer normalized LoginEntry objects
+          if (item && typeof item === 'object') {
+            const time = typeof item.time === 'string' ? item.time : '';
+            const device = typeof item.device === 'string' ? item.device : 'Unknown';
+            const ip = typeof item.ip === 'string' ? item.ip : '';
+            const userAgent = typeof item.userAgent === 'string' ? item.userAgent : '';
+            const userOk = true;
+            if (!userOk) return null;
+            return {
+              time,
+              device,
+              ip,
+              userAgent,
+            } as any;
+          }
+
+          // Back-compat: if stored as timestamps (number[]), keep time only
+          if (typeof item === 'number' && Number.isFinite(item)) {
+            const d = new Date(item);
+            const time = Number.isFinite(d.getTime())
+              ? d.toLocaleString('en-US', {
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })
+              : 'Unknown';
+
+            return {
+              time,
+              device: 'Unknown',
+              ip: '',
+              userAgent: '',
+            } as any;
+          }
+
+          return null;
+        })
+        .filter(Boolean)
     : undefined;
 
-  const activity = loginHistory ? { loginHistory: loginHistory as number[] } : undefined;
+  const deviceCountsRaw = activityRaw?.deviceCounts;
+  const deviceCounts: Record<string, number> | undefined =
+    deviceCountsRaw && typeof deviceCountsRaw === 'object' && !Array.isArray(deviceCountsRaw)
+      ? (Object.fromEntries(
+          Object.entries(deviceCountsRaw as Record<string, unknown>).filter(([, v]) => typeof v === 'number')
+        ) as Record<string, number>)
+      : undefined;
+
+  const timelineRaw = activityRaw?.timeline;
+  const timeline: { month: string; label: string; logins: number }[] | undefined =
+    Array.isArray(timelineRaw)
+      ? timelineRaw.map((t: any) => ({
+          month: typeof t.month === 'string' ? t.month : '',
+          label: typeof t.label === 'string' ? t.label : '',
+          logins: typeof t.logins === 'number' ? t.logins : 0,
+        }))
+      : undefined;
+
+  const activity = loginHistory
+    ? {
+        loginHistory: loginHistory as any[],
+        ...(deviceCounts ? { deviceCounts } : {}),
+        ...(timeline ? { timeline } : {}),
+      }
+    : undefined;
+
 
   return {
     followers,

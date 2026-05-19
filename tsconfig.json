@@ -17,6 +17,10 @@
     "utils/**/*.ts",
     "utils/**/*.tsx",
     "types/**/*.ts",
+    "screens/**/*.ts",
+    "screens/**/*.tsx",
+    "adapters/**/*.ts",
+    "adapters/**/*.tsx",
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
   ],

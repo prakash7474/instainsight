@@ -21,6 +21,7 @@ import { extractMediaFromZip } from '@/utils/parseMediaFromZip';
 import { extractStories, setActiveZip } from '@/utils/stories';
 import { buildAnalytics, parsePendingFollowRequestsHtml, uniqueUsers, type User } from '@/utils/instagramAnalyticsUtils';
 import { parseInstagramZip } from '@/utils/instagramZipParser';
+import { extractDnaFromZip } from '@/utils/dnaParser';
 
 
 
@@ -146,6 +147,18 @@ export default function UploadScreen() {
             // Cache ZIP for Stories screen URI generation
             setActiveZip(zip, base64);
 
+            // 🧬 DNA Data: parallel extraction of stories, posts, searches, messages, etc.
+            let dnaData = null;
+            try {
+                animateProgress(95);
+                setStage('parsing');
+                dnaData = await extractDnaFromZip(zip, (stage, pct) => {
+                    setProgress(pct);
+                });
+            } catch (e) {
+                console.warn('[InstaInsight][Upload] DNA extraction failed (non-critical):', e);
+            }
+
             const data = {
                 followers,
                 following,
@@ -164,6 +177,9 @@ export default function UploadScreen() {
 
             await AsyncStorage.setItem('instainsight_data', JSON.stringify(data));
             await AsyncStorage.setItem('instainsight_media', JSON.stringify(media));
+            if (dnaData) {
+                await AsyncStorage.setItem('instainsight_dna', JSON.stringify(dnaData));
+            }
 
             // Save stories metadata (paths, types, months) - no URIs
             await AsyncStorage.setItem(
@@ -362,46 +378,130 @@ export default function UploadScreen() {
         };
     };
 
-    const extractActivityData = async (zip: JSZip) => {
-        const result = {
-            loginHistory: [] as number[], // Timestamps
+    type LoginEntryRaw = {
+        time: string;
+        device: string;
+        ip: string;
+        userAgent: string;
+    };
+
+    function parseDevice(userAgent: string): string {
+        if (!userAgent) return 'Unknown';
+        if (/Android/i.test(userAgent)) return 'Android';
+        if (/iPhone|iPad|iOS/i.test(userAgent)) return 'iOS';
+        if (/Windows NT/i.test(userAgent)) return 'Windows';
+        if (/Macintosh/i.test(userAgent)) return 'Mac';
+        return 'Web/Other';
+    }
+
+    function parseMonthKey(timeStr: string): string | null {
+        const m = timeStr.match(/(\w{3})\s+\d+,\s+(\d{4})/);
+        if (!m) return null;
+        const months: Record<string, string> = {
+            Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06',
+            Jul: '07', Aug: '08', Sep: '09', Oct: '10', Nov: '11', Dec: '12',
         };
+        return `${m[2]}-${months[m[1]] || '00'}`;
+    }
+
+    function extractField(text: string, key: string): string | null {
+        const m = text.match(new RegExp(`${key}\\|?\\n?([^|\\n]+)`));
+        return m ? m[1].trim() : null;
+    }
+
+    function buildTimeline(entries: { monthKey: string | null; device: string }[]): { month: string; label: string; logins: number }[] {
+        const monthly: Record<string, number> = {};
+        for (const e of entries) {
+            if (e.monthKey) monthly[e.monthKey] = (monthly[e.monthKey] || 0) + 1;
+        }
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        return Object.entries(monthly)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .slice(-8)
+            .map(([monthKey, count]) => {
+                const [y, m] = monthKey.split('-');
+                return {
+                    month: monthKey,
+                    label: `${monthNames[parseInt(m) - 1]}'${y.slice(2)}`,
+                    logins: count,
+                };
+            });
+    }
+
+    const extractActivityData = async (zip: JSZip) => {
+        const loginEntries: LoginEntryRaw[] = [];
 
         try {
-            // Try JSON first, fall back to HTML
-            const path = [
+            const paths = [
                 'account_history/login_history.json',
                 'login_history.json',
                 'account_history/login_history.html',
                 'login_history.html',
+                'security_and_login_information/login_and_profile_creation/login_activity.html',
             ];
-            const content = await getZipFileContent(zip, path);
+            const content = await getZipFileContent(zip, paths);
             if (content) {
                 const isHtml = content.trim().charAt(0) === '<';
                 if (isHtml) {
-                    // HTML version — not easily parseable into timestamps; skip
-                    console.log(
-                        'Activity data is HTML format, timestamps not extracted',
-                    );
+                    const text = content.replace(/<[^>]+>/g, '\n');
+                    const sections = text.split(/\n{2,}/);
+                    for (const section of sections) {
+                        const joined = section.split('\n').map(s => s.trim()).filter(Boolean).join(' | ');
+                        const time = extractField(joined, 'Time');
+                        if (time) {
+                            const userAgent = extractField(joined, 'User agent') || '';
+                            const ip = extractField(joined, 'IP address') || '';
+                            loginEntries.push({
+                                time,
+                                device: parseDevice(userAgent),
+                                ip,
+                                userAgent,
+                            });
+                        }
+                    }
                 } else {
                     const data = JSON.parse(content);
                     const list = data?.login_history || data || [];
                     if (Array.isArray(list)) {
-                        result.loginHistory = list
-                            .map((item: any) => {
-                                const ts =
-                                    item?.string_list_data?.[0]?.timestamp ||
-                                    item?.timestamp;
-                                return ts ? ts * 1000 : null;
-                            })
-                            .filter(Boolean) as number[];
+                        for (const item of list) {
+                            const ts = item?.string_list_data?.[0]?.timestamp || item?.timestamp;
+                            if (ts) {
+                                const d = new Date(ts * 1000);
+                                const time = d.toLocaleString('en-US', {
+                                    month: 'short', day: 'numeric', year: 'numeric',
+                                    hour: '2-digit', minute: '2-digit',
+                                });
+                                loginEntries.push({
+                                    time,
+                                    device: 'Unknown',
+                                    ip: '',
+                                    userAgent: '',
+                                });
+                            }
+                        }
                     }
                 }
             }
         } catch (e) {
             console.log('Activity parsing failed (non-critical):', e);
         }
-        return result;
+
+        const deviceCounts: Record<string, number> = {};
+        for (const e of loginEntries) {
+            deviceCounts[e.device] = (deviceCounts[e.device] || 0) + 1;
+        }
+
+        const timelineEntries = loginEntries.map(e => ({
+            monthKey: parseMonthKey(e.time),
+            device: e.device,
+        }));
+        const timeline = buildTimeline(timelineEntries);
+
+        return {
+            loginHistory: loginEntries,
+            deviceCounts,
+            timeline,
+        };
     };
 
     const getZipFileContent = async (zip: JSZip, paths: string[]) => {

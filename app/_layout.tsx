@@ -41,6 +41,10 @@ export default function RootLayout() {
                     name="userlist"
                     options={{ title: 'User List', headerBackTitle: 'Back' }}
                 />
+                <Stack.Screen
+                    name="dna"
+                    options={{ title: 'Instagram DNA', headerBackTitle: 'Back' }}
+                />
             </Stack>
         </GestureHandlerRootView>
     );
