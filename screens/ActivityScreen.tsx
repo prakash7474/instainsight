@@ -255,18 +255,7 @@ export default function ActivityScreen({ activity }: { activity: ActivityData })
   return (
     <Animated.View style={{ opacity: fadeAnim }}>
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        {/* Media Intelligence */}
-        <SectionCard title="Media Intelligence" icon="image-outline" color="#E040FB">
-          <View style={styles.chipRow}>
-            <StatChip label="Stories" value={activity.storiesCount} color="#E040FB" />
-            <StatChip label="Posts" value={activity.postsCount} color="#7C4DFF" />
-            <StatChip label="Active Months" value={activity.activeMonths} color="#00BCD4" />
-          </View>
-          <View style={[styles.chipRow, { marginTop: 10 }]}>
-            <StatChip label="Most Active Month" value={activity.mostActiveMonth} color="#00E676" />
-          </View>
-        </SectionCard>
-
+        
         {/* Top Users */}
         {activity.topUsers.length > 0 && (
           <SectionCard title="Top Interacted Users" icon="trophy-outline" color="#FFC107">
@@ -275,6 +264,20 @@ export default function ActivityScreen({ activity }: { activity: ActivityData })
             ))}
           </SectionCard>
         )}
+        {/* Sessions & Devices */}
+        <SectionCard title="Sessions Overview" icon="phone-portrait-outline" color="#7C4DFF">
+          <View style={styles.chipRow}>
+            <StatChip label="Total Sessions" value={activity.totalSessions} color="#7C4DFF" />
+            <StatChip label="Devices Used" value={activity.devicesUsed} color="#00E676" />
+            <StatChip label="Peak Login Month" value={activity.mostActiveLoginMonth} color="#FFC107" />
+          </View>
+          {activity.deviceBreakdown.length > 0 && (
+            <View style={{ marginTop: 16 }}>
+              <Text style={{ color: '#888', fontSize: 12, fontWeight: '600', marginBottom: 10 }}>Device Breakdown</Text>
+              <DevicePie devices={activity.deviceBreakdown} />
+            </View>
+          )}
+        </SectionCard>
 
         {/* Monthly Activity Chart */}
         {activity.monthlyBars.length > 0 && (
@@ -301,20 +304,7 @@ export default function ActivityScreen({ activity }: { activity: ActivityData })
           </SectionCard>
         )}
 
-        {/* Sessions & Devices */}
-        <SectionCard title="Sessions Overview" icon="phone-portrait-outline" color="#7C4DFF">
-          <View style={styles.chipRow}>
-            <StatChip label="Total Sessions" value={activity.totalSessions} color="#7C4DFF" />
-            <StatChip label="Devices Used" value={activity.devicesUsed} color="#00E676" />
-            <StatChip label="Peak Login Month" value={activity.mostActiveLoginMonth} color="#FFC107" />
-          </View>
-          {activity.deviceBreakdown.length > 0 && (
-            <View style={{ marginTop: 16 }}>
-              <Text style={{ color: '#888', fontSize: 12, fontWeight: '600', marginBottom: 10 }}>Device Breakdown</Text>
-              <DevicePie devices={activity.deviceBreakdown} />
-            </View>
-          )}
-        </SectionCard>
+        
 
         {/* Login History */}
         {activity.loginHistory.length > 0 && (
