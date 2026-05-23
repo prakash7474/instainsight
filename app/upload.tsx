@@ -18,10 +18,25 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import JSZip from 'jszip';
 import { extractMediaFromZip } from '@/utils/parseMediaFromZip';
-import { extractStories, setActiveZip } from '@/utils/stories';
+import { extractStories } from '@/utils/stories';
 import { buildAnalytics, parsePendingFollowRequestsHtml, uniqueUsers, type User } from '@/utils/instagramAnalyticsUtils';
 import { parseInstagramZip } from '@/utils/instagramZipParser';
 import { extractDnaFromZip } from '@/utils/dnaParser';
+import {
+  parseLikedPosts,
+  parseLikedComments,
+  parseComments,
+  parseLoginActivity,
+  parsePolls,
+  parseQuestions,
+  buildTimeline,
+} from '@/utils/instagramHtmlParsers';
+import {
+  extractZipToTemp,
+  readExtractedFile,
+  cleanupExtractedDir,
+  isNativeStreamingAvailable,
+} from '@/utils/streamingZipExtractor';
 
 
 
@@ -34,6 +49,8 @@ export default function UploadScreen() {
     const [progress, setProgress] = useState(0);
     const [errorMsg, setErrorMsg] = useState('');
     const progressAnim = useRef(new Animated.Value(0)).current;
+    const extractDirRef = useRef<string | null>(null);
+    const zipRef = useRef<JSZip | null>(null);
 
     const animateProgress = (to: number) => {
         Animated.timing(progressAnim, {
@@ -63,37 +80,65 @@ export default function UploadScreen() {
             setFileName(asset.name);
             animateProgress(15);
 
-            // Read file as base64
             setStage('extracting');
-            let base64 = '';
 
-            if (Platform.OS === 'web') {
-                // Web fallback: fetch blob from URI and read as base64
-                const response = await fetch(asset.uri);
-                const blob = await response.blob();
-                base64 = await new Promise((resolve) => {
-                    const reader = new FileReader();
-                    reader.onloadend = () => {
-                        const res = reader.result as string;
-                        resolve(res.split(',')[1]); // Remove data: url prefix
-                    };
-                    reader.readAsDataURL(blob);
+            let zip: JSZip | null = null;
+            let zipBase64: string | null = null;
+
+            // On native, try streaming extraction first (handles 2GB+ ZIPs)
+            if (Platform.OS !== 'web') {
+                const sizeHint = asset.size ? `(${(asset.size / 1024 / 1024 / 1024).toFixed(1)}GB)` : '';
+                console.log(`[Upload] Extracting ZIP ${sizeHint} via native streaming…`);
+                const extractedDir = await extractZipToTemp(asset.uri, undefined, (pct) => {
+                    animateProgress(15 + Math.round(pct * 0.35));
                 });
-            } else {
-                base64 = await FileSystem.readAsStringAsync(asset.uri, {
-                    encoding: FileSystem.EncodingType.Base64,
-                });
+                if (extractedDir) {
+                    console.log(`[Upload] Extracted to ${extractedDir}`);
+                    extractDirRef.current = extractedDir;
+                    animateProgress(50);
+                } else {
+                    console.warn('[Upload] Native extraction failed, falling back to JSZip');
+                }
             }
-            animateProgress(35);
 
-            // Unzip
-            const zip = new JSZip();
-            await zip.loadAsync(base64, { base64: true });
-            animateProgress(55);
+            // If native extraction didn't work (or on web), use JSZip
+            if (!extractDirRef.current) {
+                // On web, check size to avoid crash
+                if (Platform.OS === 'web' && asset.size && asset.size > 500 * 1024 * 1024) {
+                    throw new Error(
+                        `ZIP file is too large (${(asset.size / 1024 / 1024 / 1024).toFixed(1)}GB) for browser. ` +
+                        `Please use the mobile app or request a smaller export from Instagram.`
+                    );
+                }
+
+                let b64 = '';
+                if (Platform.OS === 'web') {
+                    const response = await fetch(asset.uri);
+                    const blob = await response.blob();
+                    b64 = await new Promise((resolve) => {
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            const res = reader.result as string;
+                            resolve(res.split(',')[1]);
+                        };
+                        reader.readAsDataURL(blob);
+                    });
+                } else {
+                    b64 = await FileSystem.readAsStringAsync(asset.uri, {
+                        encoding: FileSystem.EncodingType.Base64,
+                    });
+                }
+                zipBase64 = b64;
+                zip = new JSZip();
+                await zip.loadAsync(b64, { base64: true });
+                zipRef.current = zip;
+                animateProgress(50);
+            }
 
             setStage('parsing');
+
             // Parse followers and following from Instagram export
-            const followers = await extractUserList(zip, [
+            const followers = await extractUserList([
                 'connections/followers_and_following/followers_1.json',
                 'connections/followers_and_following/followers.json',
                 'followers.json',
@@ -103,60 +148,88 @@ export default function UploadScreen() {
             ]);
             animateProgress(70);
 
-            const following = await extractUserList(zip, [
+            const following = await extractUserList([
                 'connections/followers_and_following/following.json',
                 'following.json',
                 'connections/followers_and_following/following.html',
                 'following.html',
             ]);
-            animateProgress(85);
+            animateProgress(80);
 
             // 🚀 NEW: Engagement Data (Likes & Comments)
-            const engagement = await extractEngagementData(zip);
+            const engagement = await extractEngagementData(readFile);
+            animateProgress(85);
+
+            // 🚀 NEW: Polls Data
+            let pollsData = { total: 0, monthly: {} as Record<string, number> };
+            const pollsContent = await readFile(['polls/polls.html', 'polls.html', 'content/polls/polls.html']);
+            if (pollsContent) {
+                pollsData = parsePolls(pollsContent);
+            }
+            animateProgress(88);
+
+            // 🚀 NEW: Questions Data
+            let questionsData = { total: 0, monthly: {} as Record<string, number> };
+            const questionsContent = await readFile(['questions/questions.html', 'questions.html', 'content/questions/questions.html']);
+            if (questionsContent) {
+                questionsData = parseQuestions(questionsContent);
+            }
             animateProgress(90);
 
             // 🚀 NEW: Activity Data (Account History)
-            const activity = await extractActivityData(zip);
+            const activity = await extractActivityData(readFile);
             animateProgress(92);
 
+            // Build combined timeline from all activity sources
+            const timeline = buildTimeline({
+                postComments: engagement.postComments,
+                reelComments: engagement.reelComments,
+                polls: pollsData,
+                questions: questionsData,
+                logins: { monthly: activity.monthly },
+            });
+
             // 🚀 NEW: Pending Requests
-            const pendingRequests = await extractUserList(zip, [
+            const pendingRequests = await extractUserList([
                 'connections/followers_and_following/pending_follow_requests.html',
                 'pending_follow_requests.json',
             ]);
             animateProgress(94);
 
             // 🚀 NEW: Parse all insight data files from connections/followers_and_following/
-            const insights = await parseInstagramZip(zip);
-            animateProgress(97);
+            let insights: Awaited<ReturnType<typeof parseInstagramZip>> = {} as any;
+            if (zipRef.current) {
+                insights = await parseInstagramZip(zipRef.current);
+            }
+            animateProgress(96);
 
             if (!followers.length && !following.length) {
-                // Try to list files for debugging
-                const files = Object.keys(zip.files).slice(0, 20);
+                const files = zipRef.current ? Object.keys(zipRef.current.files).slice(0, 20) : ['(extracted directory)'];
                 throw new Error(
                     `Could not find follower/following data in ZIP.\n\nFiles found:\n${files.join('\n')}\n\nNote: If you exported as HTML, we try to parse that, but JSON is recommended.`
                 );
             }
 
             // 🚀 NEW: Media Intelligence (Gallery & Stories)
-            const media = await extractMediaFromZip(zip);
-
-            // NEW: Extract stories metadata (paths, types, months) - no URIs
-            const storiesData = extractStories(zip);
-
-            // Cache ZIP for Stories screen URI generation
-            setActiveZip(zip, base64);
+            let media = { posts: {}, stories: {}, processedAt: Date.now() };
+            let storiesData: any[] = [];
+            if (zipRef.current) {
+                media = await extractMediaFromZip(zipRef.current);
+                storiesData = extractStories(zipRef.current);
+            }
 
             // 🧬 DNA Data: parallel extraction of stories, posts, searches, messages, etc.
             let dnaData = null;
-            try {
-                animateProgress(95);
-                setStage('parsing');
-                dnaData = await extractDnaFromZip(zip, (stage, pct) => {
-                    setProgress(pct);
-                });
-            } catch (e) {
-                console.warn('[InstaInsight][Upload] DNA extraction failed (non-critical):', e);
+            if (zipRef.current) {
+                try {
+                    animateProgress(95);
+                    setStage('parsing');
+                    dnaData = await extractDnaFromZip(zipRef.current, (stage, pct) => {
+                        setProgress(pct);
+                    });
+                } catch (e) {
+                    console.warn('[InstaInsight][Upload] DNA extraction failed (non-critical):', e);
+                }
             }
 
             const data = {
@@ -172,6 +245,9 @@ export default function UploadScreen() {
                 pendingRequests,
                 engagement,
                 activity,
+                polls: pollsData,
+                questions: questionsData,
+                timeline,
                 processedAt: Date.now(),
             };
 
@@ -187,56 +263,54 @@ export default function UploadScreen() {
                 JSON.stringify({ stories: storiesData, processedAt: Date.now() })
             );
 
-            // Persist ZIP base64 as fallback for app restart
-            try {
-                await AsyncStorage.setItem(
-                    'instainsight_zip_base64',
-                    JSON.stringify({ base64, processedAt: Date.now() })
-                );
-            } catch (e) {
-                console.warn('[InstaInsight][Upload] Could not persist ZIP base64 (quota likely exceeded). Stories will work during this session only.', e);
+            // Persist ZIP base64 as fallback for app restart (only if JSZip was used)
+            if (zipBase64) {
+                try {
+                    await AsyncStorage.setItem(
+                        'instainsight_zip_base64',
+                        JSON.stringify({ base64: zipBase64, processedAt: Date.now() })
+                    );
+                } catch (e) {
+                    console.warn('[InstaInsight][Upload] Could not persist ZIP base64 (quota likely exceeded). Stories will work during this session only.', e);
+                }
             }
 
             animateProgress(100);
 
 
             setStage('done');
+            // Cleanup extracted directory
+            if (extractDirRef.current) {
+                cleanupExtractedDir(extractDirRef.current).catch(() => {});
+                extractDirRef.current = null;
+            }
+
             setTimeout(() => router.push('/dashboard'), 1200);
         } catch (err: any) {
             setStage('error');
+            // Cleanup on error
+            if (extractDirRef.current) {
+                cleanupExtractedDir(extractDirRef.current).catch(() => {});
+                extractDirRef.current = null;
+            }
             setErrorMsg(err?.message || 'An error occurred while processing the file. Check if it is a valid Instagram export.');
             console.error(err);
         }
     };
 
-    const extractUserList = async (zip: JSZip, paths: string[]): Promise<string[]> => {
-        for (const path of paths) {
-            const file = zip.file(path);
-            if (file) {
-                const content = await file.async('string');
-                if (path.endsWith('.html')) {
-                    return parseInstagramUserHTML(content);
-                }
-                return parseInstagramUserJSON(content);
-            }
+    const extractUserList = async (paths: string[]): Promise<string[]> => {
+        const content = await readFile(paths);
+        if (!content) return [];
+        const usedPath = paths.find(p => {
+            if (extractDirRef.current) return true; // always true for extracted dir
+            const z = zipRef.current;
+            if (!z) return false;
+            return !!z.file(p) || Object.keys(z.files).some(f => f.endsWith(p.split('/').pop()!));
+        }) || paths[0];
+        if (usedPath.endsWith('.html') || usedPath.endsWith('.htm')) {
+            return parseInstagramUserHTML(content);
         }
-        // Try fuzzy match
-        const allFiles = Object.keys(zip.files);
-        for (const path of paths) {
-            const base = path.split('/').pop()!;
-            const match = allFiles.find((f) => f.endsWith(base));
-            if (match) {
-                const file = zip.file(match);
-                if (file) {
-                    const content = await file.async('string');
-                    if (match.endsWith('.html')) {
-                        return parseInstagramUserHTML(content);
-                    }
-                    return parseInstagramUserJSON(content);
-                }
-            }
-        }
-        return [];
+        return parseInstagramUserJSON(content);
     };
 
     const FIELD_LABELS = new Set(['Name','URL','Caption','Owner','Username','Hashtags',
@@ -283,34 +357,127 @@ export default function UploadScreen() {
         return counts;
     };
 
-    const extractEngagementData = async (zip: JSZip) => {
+    type ParsedEngagement = {
+      likedPosts: { total: number; topUsers: { user: string; count: number }[]; monthly: Record<string, number> };
+      likedComments: { total: number; topUsers: { user: string; count: number }[] };
+      postComments: { total: number; topTargets: { user: string; count: number }[]; monthly: Record<string, number> };
+      reelComments: { total: number; topTargets: { user: string; count: number }[]; monthly: Record<string, number> };
+      combined: { user: string; likedPosts: number; likedComments: number; commented: number; total: number }[];
+    };
+
+    const extractEngagementData = async (
+        readFileFn: (paths: string[], maxSize?: number) => Promise<string | null>,
+    ): Promise<ParsedEngagement> => {
         const likesMap: Record<string, number> = {};
         const commentsMap: Record<string, number> = {};
+        let likedPostsMonthly: Record<string, number> = {};
+        let postCommentsMonthly: Record<string, number> = {};
+        let reelCommentsMonthly: Record<string, number> = {};
+        let likedPostsTotal = 0;
+        let postCommentsTop: { user: string; count: number }[] = [];
+        let reelCommentsTop: { user: string; count: number }[] = [];
 
         try {
-            // Parse Likes — try JSON first, fall back to HTML
-            const likesPaths = [
-                'likes/liked_posts.json',
-                'likes.json',
+            // ── Parse Likes ──
+            // Try JSON first
+            const likesJsonPaths = ['likes/liked_posts.json', 'likes.json'];
+            const likesJson = await readFileFn( likesJsonPaths);
+            if (likesJson) {
+                const likesData = JSON.parse(likesJson);
+                const list = Array.isArray(likesData) ? likesData : (likesData.likes_media_likes || []);
+                list.forEach((item: any) => {
+                    const username = item?.string_list_data?.[0]?.value || item?.title;
+                    if (username && typeof username === 'string') {
+                        likesMap[username] = (likesMap[username] || 0) + 1;
+                    }
+                });
+            }
+
+            // Try new HTML parser (liked_posts.html — _a6-g format)
+            const likesHtmlPaths = [
                 'likes/liked_posts.html',
                 'likes.html',
+                'content/likes/liked_posts.html',
             ];
-            const likesContent = await getZipFileContent(zip, likesPaths);
-            if (likesContent) {
-                const isHtml = likesContent.trim().charAt(0) === '<';
+            const likesHtml = await readFileFn( likesHtmlPaths);
+            if (likesHtml && Object.keys(likesMap).length === 0) {
+                const parsed = parseLikedPosts(likesHtml);
+                parsed.topUsers.forEach(({ user, count }) => { likesMap[user] = count; });
+                likedPostsMonthly = parsed.monthly;
+                likedPostsTotal = parsed.total;
+            } else if (likesHtml) {
+                // Augment with monthly data from parser
+                const parsed = parseLikedPosts(likesHtml);
+                likedPostsMonthly = parsed.monthly;
+                likedPostsTotal = Object.values(likesMap).reduce((a, b) => a + b, 0);
+            }
 
+            // Fallback generic HTML parser
+            if (Object.keys(likesMap).length === 0 && likesHtml) {
+                const htmlCounts = extractUsernamesWithCounts(likesHtml);
+                Object.assign(likesMap, htmlCounts);
+            }
+
+            likedPostsTotal = Object.values(likesMap).reduce((a, b) => a + b, 0);
+
+            // ── Parse Comments (liked comments) ──
+            const cmtLikedPaths = [
+                'likes/liked_comments.json',
+                'likes/comments.json',
+                'liked_comments.json',
+                'likes/liked_comments.html',
+                'liked_comments.html',
+                'content/likes/liked_comments.html',
+            ];
+            const cmtLikedContent = await readFileFn( cmtLikedPaths);
+            if (cmtLikedContent) {
+                const isHtml = cmtLikedContent.trim().charAt(0) === '<';
                 if (isHtml) {
-                    const htmlCounts = extractUsernamesWithCounts(likesContent);
-                    Object.assign(likesMap, htmlCounts);
+                    // Try new parser first
+                    const parsed = parseLikedComments(cmtLikedContent);
+                    if (parsed.total > 0) {
+                        parsed.topUsers.forEach(({ user, count }) => { commentsMap[user] = count; });
+                    } else {
+                        const htmlCounts = extractUsernamesWithCounts(cmtLikedContent);
+                        Object.assign(commentsMap, htmlCounts);
+                    }
                 } else {
-                    const likesData = JSON.parse(likesContent);
-                    const list = Array.isArray(likesData)
-                        ? likesData
-                        : (likesData.likes_media_likes || []);
-
+                    const data = JSON.parse(cmtLikedContent);
+                    const list = Array.isArray(data) ? data : (data.likes_comment_likes || []);
                     list.forEach((item: any) => {
-                        const username =
-                            item?.string_list_data?.[0]?.value || item?.title;
+                        const username = item?.string_list_data?.[0]?.value || item?.title;
+                        if (username && typeof username === 'string') {
+                            commentsMap[username] = (commentsMap[username] || 0) + 1;
+                        }
+                    });
+                }
+            }
+
+            // ── Parse Post Comments (media comments you wrote) ──
+            const postCmtPaths = [
+                'comments/post_comments_1.json',
+                'comments/post_comments.json',
+                'post_comments_1.json',
+                'post_comments.json',
+                'comments/post_comments_1.html',
+                'post_comments_1.html',
+                'comments/post_comments.html',
+                'post_comments.html',
+                'comments.html',
+                'content/comments/post_comments_1.html',
+            ];
+            const postCmtContent = await readFileFn( postCmtPaths);
+            if (postCmtContent) {
+                const isHtml = postCmtContent.trim().charAt(0) === '<';
+                if (isHtml) {
+                    const parsed = parseComments(postCmtContent);
+                    postCommentsTop = parsed.topTargets;
+                    postCommentsMonthly = parsed.monthly;
+                } else {
+                    const data = JSON.parse(postCmtContent);
+                    const list = Array.isArray(data) ? data : (data.comments_media_comments || []);
+                    list.forEach((item: any) => {
+                        const username = item?.string_list_data?.[0]?.value || item?.title;
                         if (username && typeof username === 'string') {
                             likesMap[username] = (likesMap[username] || 0) + 1;
                         }
@@ -318,36 +485,21 @@ export default function UploadScreen() {
                 }
             }
 
-            // Parse Comments — try JSON first, fall back to HTML
-            const commsPaths = [
-                'comments/comments.json',
-                'comments/post_comments.json',
-                'post_comments.json',
-                'comments/comments.html',
-                'comments/post_comments.html',
-                'post_comments.html',
-                'comments.html',
+            // ── Parse Reel Comments ──
+            const reelCmtPaths = [
+                'comments/reels_comments.json',
+                'reels_comments.json',
+                'comments/reels_comments.html',
+                'reels_comments.html',
+                'content/comments/reels_comments.html',
             ];
-            const commsContent = await getZipFileContent(zip, commsPaths);
-            if (commsContent) {
-                const isHtml = commsContent.trim().charAt(0) === '<';
-
+            const reelCmtContent = await readFileFn( reelCmtPaths);
+            if (reelCmtContent) {
+                const isHtml = reelCmtContent.trim().charAt(0) === '<';
                 if (isHtml) {
-                    const htmlCounts = extractUsernamesWithCounts(commsContent);
-                    Object.assign(commentsMap, htmlCounts);
-                } else {
-                    const commsData = JSON.parse(commsContent);
-                    const list = Array.isArray(commsData)
-                        ? commsData
-                        : (commsData.comments_media_comments || []);
-
-                    list.forEach((item: any) => {
-                        const username =
-                            item?.string_list_data?.[0]?.value || item?.title;
-                        if (username && typeof username === 'string') {
-                            commentsMap[username] = (commentsMap[username] || 0) + 1;
-                        }
-                    });
+                    const parsed = parseComments(reelCmtContent);
+                    reelCommentsTop = parsed.topTargets;
+                    reelCommentsMonthly = parsed.monthly;
                 }
             }
         } catch (e) {
@@ -356,25 +508,43 @@ export default function UploadScreen() {
 
         // Merge likes + comments into combined list
         const allUsers = new Set([...Object.keys(likesMap), ...Object.keys(commentsMap)]);
-        const combined: { user: string; likedPosts: number; likedComments: number; total: number }[] = [];
+        const combined: { user: string; likedPosts: number; likedComments: number; commented: number; total: number }[] = [];
         for (const user of allUsers) {
             const likedPosts = likesMap[user] || 0;
             const likedComments = commentsMap[user] || 0;
-            combined.push({ user, likedPosts, likedComments, total: likedPosts + likedComments });
+            combined.push({ user, likedPosts, likedComments, commented: 0, total: likedPosts + likedComments });
         }
         combined.sort((a, b) => b.total - a.total);
 
-        const totalLikes = Object.values(likesMap).reduce((a, b) => a + b, 0);
-        const totalComments = Object.values(commentsMap).reduce((a, b) => a + b, 0);
+        const totalLikedComments = Object.values(commentsMap).reduce((a, b) => a + b, 0);
 
         return {
-            topLikes: Object.entries(likesMap)
-                .map(([user, count]) => ({ user, count }))
-                .sort((a, b) => b.count - a.count)
-                .slice(0, 10),
-            topCombined: combined.slice(0, 10),
-            totalLikes,
-            totalComments,
+            likedPosts: {
+                total: likedPostsTotal,
+                topUsers: Object.entries(likesMap)
+                    .map(([user, count]) => ({ user, count }))
+                    .sort((a, b) => b.count - a.count)
+                    .slice(0, 20),
+                monthly: likedPostsMonthly,
+            },
+            likedComments: {
+                total: totalLikedComments,
+                topUsers: Object.entries(commentsMap)
+                    .map(([user, count]) => ({ user, count }))
+                    .sort((a, b) => b.count - a.count)
+                    .slice(0, 20),
+            },
+            postComments: {
+                total: postCommentsTop.reduce((a, b) => a + b.count, 0),
+                topTargets: postCommentsTop,
+                monthly: postCommentsMonthly,
+            },
+            reelComments: {
+                total: reelCommentsTop.reduce((a, b) => a + b.count, 0),
+                topTargets: reelCommentsTop,
+                monthly: reelCommentsMonthly,
+            },
+            combined: combined.slice(0, 10),
         };
     };
 
@@ -409,27 +579,12 @@ export default function UploadScreen() {
         return m ? m[1].trim() : null;
     }
 
-    function buildTimeline(entries: { monthKey: string | null; device: string }[]): { month: string; label: string; logins: number }[] {
-        const monthly: Record<string, number> = {};
-        for (const e of entries) {
-            if (e.monthKey) monthly[e.monthKey] = (monthly[e.monthKey] || 0) + 1;
-        }
-        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        return Object.entries(monthly)
-            .sort(([a], [b]) => a.localeCompare(b))
-            .slice(-8)
-            .map(([monthKey, count]) => {
-                const [y, m] = monthKey.split('-');
-                return {
-                    month: monthKey,
-                    label: `${monthNames[parseInt(m) - 1]}'${y.slice(2)}`,
-                    logins: count,
-                };
-            });
-    }
-
-    const extractActivityData = async (zip: JSZip) => {
+    const extractActivityData = async (
+        readFileFn: (paths: string[], maxSize?: number) => Promise<string | null>,
+    ) => {
         const loginEntries: LoginEntryRaw[] = [];
+        let loginMonthly: Record<string, number> = {};
+        let deviceCounts: Record<string, number> = {};
 
         try {
             const paths = [
@@ -438,25 +593,43 @@ export default function UploadScreen() {
                 'account_history/login_history.html',
                 'login_history.html',
                 'security_and_login_information/login_and_profile_creation/login_activity.html',
+                'content/login_and_profile_creation/login_activity.html',
+                'login_activity.html',
             ];
-            const content = await getZipFileContent(zip, paths);
+            const content = await readFileFn( paths);
             if (content) {
                 const isHtml = content.trim().charAt(0) === '<';
                 if (isHtml) {
-                    const text = content.replace(/<[^>]+>/g, '\n');
-                    const sections = text.split(/\n{2,}/);
-                    for (const section of sections) {
-                        const joined = section.split('\n').map(s => s.trim()).filter(Boolean).join(' | ');
-                        const time = extractField(joined, 'Time');
-                        if (time) {
-                            const userAgent = extractField(joined, 'User agent') || '';
-                            const ip = extractField(joined, 'IP address') || '';
+                    // Try new _a6-g parser first
+                    const parsed = parseLoginActivity(content);
+                    if (parsed.total > 0) {
+                        parsed.logins.forEach(l => {
                             loginEntries.push({
-                                time,
-                                device: parseDevice(userAgent),
-                                ip,
-                                userAgent,
+                                time: l.time,
+                                device: l.device,
+                                ip: '',
+                                userAgent: '',
                             });
+                        });
+                        deviceCounts = parsed.deviceCounts;
+                        loginMonthly = parsed.monthly;
+                    } else {
+                        // Fallback to generic HTML extraction
+                        const text = content.replace(/<[^>]+>/g, '\n');
+                        const sections = text.split(/\n{2,}/);
+                        for (const section of sections) {
+                            const joined = section.split('\n').map(s => s.trim()).filter(Boolean).join(' | ');
+                            const time = extractField(joined, 'Time');
+                            if (time) {
+                                const userAgent = extractField(joined, 'User agent') || '';
+                                const ip = extractField(joined, 'IP address') || '';
+                                loginEntries.push({
+                                    time,
+                                    device: parseDevice(userAgent),
+                                    ip,
+                                    userAgent,
+                                });
+                            }
                         }
                     }
                 } else {
@@ -486,35 +659,85 @@ export default function UploadScreen() {
             console.log('Activity parsing failed (non-critical):', e);
         }
 
-        const deviceCounts: Record<string, number> = {};
-        for (const e of loginEntries) {
-            deviceCounts[e.device] = (deviceCounts[e.device] || 0) + 1;
+        if (Object.keys(deviceCounts).length === 0) {
+            for (const e of loginEntries) {
+                deviceCounts[e.device] = (deviceCounts[e.device] || 0) + 1;
+            }
         }
 
-        const timelineEntries = loginEntries.map(e => ({
-            monthKey: parseMonthKey(e.time),
-            device: e.device,
-        }));
-        const timeline = buildTimeline(timelineEntries);
+        if (Object.keys(loginMonthly).length === 0) {
+            const timelineEntries = loginEntries.map(e => ({
+                monthKey: parseMonthKey(e.time),
+                device: e.device,
+            }));
+            const monthly: Record<string, number> = {};
+            for (const e of timelineEntries) {
+                if (e.monthKey) monthly[e.monthKey] = (monthly[e.monthKey] || 0) + 1;
+            }
+            loginMonthly = monthly;
+        }
 
         return {
             loginHistory: loginEntries,
             deviceCounts,
-            timeline,
+            monthly: loginMonthly,
         };
     };
 
-    const getZipFileContent = async (zip: JSZip, paths: string[]) => {
-        for (const path of paths) {
-            const file = zip.file(path);
-            if (file) return await file.async('string');
+    const MAX_HTML_SIZE = 50 * 1024 * 1024; // 50MB — skip HTML files larger than this
+
+    /** Try to read a file from extracted directory, then fall back to JSZip */
+    const readFile = async (paths: string[], maxSize?: number): Promise<string | null> => {
+        // Try extracted directory first (native streaming path)
+        if (extractDirRef.current) {
+            for (const path of paths) {
+                const content = await readExtractedFile(extractDirRef.current, path, maxSize ?? MAX_HTML_SIZE);
+                if (content !== null) return content;
+            }
+            return null;
         }
-        // Fuzzy local
-        const all = Object.keys(zip.files);
+        // Fall back to JSZip
+        const z = zipRef.current;
+        if (!z) return null;
+        const limit = maxSize ?? MAX_HTML_SIZE;
+        const getSize = (f: JSZip.JSZipObject): number => {
+            const ff = f as any;
+            return ff.uncompressedSize || ff._data?.uncompressedSize || 0;
+        };
+        for (const path of paths) {
+            const file = z.file(path);
+            if (file) {
+                const size = getSize(file);
+                if (size > limit) {
+                    console.warn(`[Upload] Skipping ${path} — ${(size / 1024 / 1024).toFixed(1)}MB exceeds limit`);
+                    return null;
+                }
+                try {
+                    return await file.async('string');
+                } catch (e) {
+                    console.warn(`[Upload] Failed to read ${path}:`, e);
+                    return null;
+                }
+            }
+        }
+        const all = Object.keys(z.files);
         for (const path of paths) {
             const base = path.split('/').pop()!;
             const match = all.find(f => f.endsWith(base));
-            if (match) return await zip.file(match)!.async('string');
+            if (match) {
+                const file = z.file(match)!;
+                const size = getSize(file);
+                if (size > limit) {
+                    console.warn(`[Upload] Skipping ${match} — ${(size / 1024 / 1024).toFixed(1)}MB exceeds limit`);
+                    return null;
+                }
+                try {
+                    return await file.async('string');
+                } catch (e) {
+                    console.warn(`[Upload] Failed to read ${match}:`, e);
+                    return null;
+                }
+            }
         }
         return null;
     };

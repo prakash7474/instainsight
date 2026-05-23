@@ -32,10 +32,21 @@ export type DnaCuriosity = {
   topDomains: { domain: string; count: number }[];
 };
 
+export type AccountAge = {
+  signupDate: string;
+  signupLabel: string;
+  ageInDays: number;
+  ageInMonths: number;
+  ageInYears: number;
+  ageString: string;
+  era: string;
+};
+
 export type DnaIdentity = {
   totalChanges: number;
   changeTimeline: { date: string; type: string; old: string; new: string }[];
   accountAgeDays: number;
+  accountAge: AccountAge | null;
 };
 
 export type DnaData = {
@@ -527,6 +538,90 @@ async function extractChatData(
 
 // ─── Main Entry Point ────────────────────────────────────────────────────────
 
+// ─── Signup Date Parser ──────────────────────────────────────────────────────
+
+const ERA_LABELS: { maxYear: number; label: string }[] = [
+  { maxYear: 2012, label: 'OG user' },
+  { maxYear: 2015, label: 'Early adopter' },
+  { maxYear: 2018, label: 'Golden era' },
+  { maxYear: 2021, label: 'Reels era' },
+  { maxYear: 9999, label: 'New wave' },
+];
+
+function extractSignupDateFromText(text: string): Date | null {
+  const MONTHS: Record<string, string> = {
+    jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+    jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
+  };
+
+  const m1 = text.match(/(\w{3,9})\s+(\d{1,2}),\s+(\d{4})(?:\s+(\d{1,2}):(\d{2})\s*(am|pm))?/i);
+  if (m1) {
+    const mo = MONTHS[m1[1].slice(0, 3).toLowerCase()];
+    if (mo) {
+      return new Date(`${m1[3]}-${mo}-${m1[2].padStart(2, '0')}T00:00:00`);
+    }
+  }
+
+  const m2 = text.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/);
+  if (m2) {
+    return new Date(`${m2[1]}-${m2[2]}-${m2[3]}T00:00:00`);
+  }
+
+  const m3 = text.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m3) {
+    return new Date(`${m3[3]}-${m3[1].padStart(2, '0')}-${m3[2].padStart(2, '0')}T00:00:00`);
+  }
+
+  return null;
+}
+
+function findSignupDateInHTML(html: string): Date | null {
+  const text = stripHtml(html);
+  const sections = extractEntries(text);
+
+  for (const section of sections) {
+    const isSignup = /registr|joined|sign.?up|account.?creat/i.test(section);
+    if (!isSignup) continue;
+    const date = extractSignupDateFromText(section);
+    if (date) return date;
+  }
+
+  return extractSignupDateFromText(text);
+}
+
+function buildAccountAge(signupDate: Date): AccountAge {
+  const now = new Date();
+  const diffMs = now.getTime() - signupDate.getTime();
+  const diffDays = Math.max(0, Math.floor(diffMs / 86400000));
+  const diffMonths = Math.floor(diffDays / 30.44);
+  const diffYears = Math.floor(diffDays / 365.25);
+
+  let ageString: string;
+  if (diffYears >= 1) {
+    const remMonths = diffMonths - diffYears * 12;
+    ageString = remMonths > 0 ? `${diffYears}y ${remMonths}m` : `${diffYears} year${diffYears > 1 ? 's' : ''}`;
+  } else if (diffMonths >= 1) {
+    ageString = `${diffMonths} month${diffMonths > 1 ? 's' : ''}`;
+  } else {
+    ageString = `${diffDays} days`;
+  }
+
+  const year = signupDate.getFullYear();
+  const era = ERA_LABELS.find(e => year <= e.maxYear)?.label ?? 'New wave';
+
+  return {
+    signupDate: signupDate.toISOString().split('T')[0],
+    signupLabel: signupDate.toLocaleDateString('en-IN', {
+      day: 'numeric', month: 'long', year: 'numeric',
+    }),
+    ageInDays: diffDays,
+    ageInMonths: diffMonths,
+    ageInYears: diffYears,
+    ageString,
+    era,
+  };
+}
+
 export async function extractDnaFromZip(
   zip: JSZip,
   onProgress?: (stage: string, pct: number) => void,
@@ -657,15 +752,30 @@ export async function extractDnaFromZip(
     new: c.new,
   }));
 
-  const firstChange = changeTimeline.length > 0 ? new Date(changeTimeline[0].date) : null;
-  const accountAgeDays = firstChange
-    ? Math.max(0, Math.floor((Date.now() - firstChange.getTime()) / 86400000))
-    : 0;
+  onProgress?.('Parsing signup date...', 58);
+
+  const signupHTML = await readZipFile(zip, [
+    'security_and_login_information/login_and_profile_creation/signup_details.html',
+    'signup_details.html',
+  ]);
+  const personalHTML = await readZipFile(zip, [
+    'personal_information/personal_information/personal_information.html',
+    'personal_information.html',
+  ]);
+  await yieldToEventLoop();
+
+  let signupDate: Date | null = null;
+  if (signupHTML) signupDate = findSignupDateInHTML(signupHTML);
+  if (!signupDate && personalHTML) signupDate = findSignupDateInHTML(personalHTML);
+
+  const accountAge = signupDate ? buildAccountAge(signupDate) : null;
+  const accountAgeDays = accountAge?.ageInDays ?? 0;
 
   const identity: DnaIdentity = {
     totalChanges: profileChanges?.total ?? 0,
     changeTimeline,
     accountAgeDays,
+    accountAge,
   };
 
   onProgress?.('Parsing chats...', 60);

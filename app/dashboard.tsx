@@ -530,13 +530,24 @@ export default function DashboardScreen() {
 
     const deviceCounts = data.activity?.deviceCounts ?? {};
 
+    // Sum from timeline if available, else use stored totals
+    const timelineTotals = (data.timeline ?? data.activity?.timeline ?? []).reduce(
+      (acc: any, m: any) => ({
+        postComments: acc.postComments + (m.postComments || 0),
+        reelComments: acc.reelComments + (m.reelComments || 0),
+        polls: acc.polls + (m.polls || 0),
+        questions: acc.questions + (m.questions || 0),
+      }),
+      { postComments: 0, reelComments: 0, polls: 0, questions: 0 },
+    );
+
     const raw = {
       summary: {
         totalLogins: mappedLogins.length,
-        totalPostComments: 0,
-        totalReelComments: 0,
-        totalPolls: 0,
-        totalQuestions: 0,
+        totalPostComments: timelineTotals.postComments,
+        totalReelComments: timelineTotals.reelComments,
+        totalPolls: data.polls?.total ?? timelineTotals.polls,
+        totalQuestions: data.questions?.total ?? timelineTotals.questions,
         totalLikedPosts: data.engagement?.totalLikes ?? 0,
         totalLikedComments: data.engagement?.totalComments ?? 0,
       },

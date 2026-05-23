@@ -1,9 +1,22 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 export default function RootLayout() {
+    // Expo Router / React Navigation uses useLayoutEffect internally.
+    // On SSR/web this triggers a warning and can cause hydration mismatches.
+    // Rendering the navigator only after client mount avoids that.
+    const [isClient, setIsClient] = useState(false);
+
+    useEffect(() => {
+        setIsClient(true);
+    }, []);
+
+    if (!isClient) {
+        return <GestureHandlerRootView style={{ flex: 1 }} />;
+    }
+
     return (
         <GestureHandlerRootView style={{ flex: 1 }}>
             <StatusBar style="light" />
@@ -49,3 +62,4 @@ export default function RootLayout() {
         </GestureHandlerRootView>
     );
 }
+

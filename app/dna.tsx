@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Svg, { Circle, G, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
 import { useDnaData } from '@/hooks/useDnaData';
 import type { DnaData } from '@/utils/dnaParser';
+import { AccountAgeCard } from '@/components/AccountAgeCard';
 
 const { width } = Dimensions.get('window');
 const TAB_NAMES = ['Timeline', 'Social Graph', 'Curiosity Map', 'Identity'] as const;
@@ -540,11 +541,14 @@ const IdentityTab = React.memo(({ data }: { data: DnaData }) => {
 
   return (
     <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
-      <SectionCard title="Profile Identity" icon="person-outline" color="#7C4DFF">
+      {identity.accountAge && (
+        <AccountAgeCard age={identity.accountAge} />
+      )}
+
+      <SectionCard title="Profile Changes" icon="person-outline" color="#7C4DFF">
         <View style={styles.chipRow}>
           <StatChip label="Total Changes" value={identity.totalChanges} color="#7C4DFF" />
           <StatChip label="Changes Logged" value={identity.changeTimeline.length} color="#00E676" />
-          <StatChip label="Account Age" value={identity.accountAgeDays > 0 ? `${identity.accountAgeDays}d` : '—'} color="#E040FB" />
         </View>
       </SectionCard>
 

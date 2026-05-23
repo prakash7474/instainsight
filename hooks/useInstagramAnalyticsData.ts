@@ -36,8 +36,11 @@ export type InstagramData = {
   activity?: {
     loginHistory: number[] | { time: string; device: string; ip: string; userAgent: string }[];
     deviceCounts?: Record<string, number>;
-    timeline?: { month: string; label: string; logins: number }[];
+    timeline?: { month: string; label: string; postComments: number; reelComments: number; polls: number; questions: number; logins: number }[];
   };
+  polls?: { total: number; monthly: Record<string, number> };
+  questions?: { total: number; monthly: Record<string, number> };
+  timeline?: { month: string; label: string; postComments: number; reelComments: number; polls: number; questions: number; logins: number }[];
   processedAt: number;
 };
 
@@ -83,35 +86,67 @@ function normalizeStoredInstagramData(input: unknown): InstagramData | null {
   const pendingRequests = safeStringArray(obj.pendingRequests);
 
   const engagementRaw = obj.engagement as any;
-  const topLikesRaw = engagementRaw?.topLikes;
-  const topLikes = Array.isArray(topLikesRaw)
-    ? topLikesRaw
+
+  // Support both old format (topLikes/topCombined) and new format (likedPosts/likedComments/postComments/reelComments/combined)
+  let topLikes: { user: string; count: number }[] = [];
+  let topCombined: { user: string; likedPosts: number; likedComments: number; total: number }[] = [];
+  let totalLikes = 0;
+  let totalComments = 0;
+
+  if (engagementRaw) {
+    // Old format
+    if (Array.isArray(engagementRaw.topLikes)) {
+      topLikes = engagementRaw.topLikes
         .map((x: any) => ({
           user: typeof x?.user === 'string' ? x.user : '',
           count: safeNumber(x?.count, 0),
         }))
-        .filter((x: any) => x.user)
-    : [];
+        .filter((x: any) => x.user);
+    }
 
-  const topCombinedRaw = engagementRaw?.topCombined;
-  const topCombined = Array.isArray(topCombinedRaw)
-    ? topCombinedRaw
+    if (Array.isArray(engagementRaw.topCombined)) {
+      topCombined = engagementRaw.topCombined
         .map((x: any) => ({
           user: typeof x?.user === 'string' ? x.user : '',
           likedPosts: safeNumber(x?.likedPosts, 0),
           likedComments: safeNumber(x?.likedComments, 0),
           total: safeNumber(x?.total, 0),
         }))
-        .filter((x: any) => x.user)
-    : [];
+        .filter((x: any) => x.user);
+    }
+
+    totalLikes = safeNumber(engagementRaw.totalLikes, 0);
+    totalComments = safeNumber(engagementRaw.totalComments, 0);
+
+    // New format — map likedPosts.topUsers → topLikes, likedPosts.total → totalLikes, etc.
+    if (!topLikes.length && engagementRaw.likedPosts?.topUsers) {
+      topLikes = engagementRaw.likedPosts.topUsers
+        .map((x: any) => ({
+          user: typeof x?.user === 'string' ? x.user : '',
+          count: safeNumber(x?.count, 0),
+        }))
+        .filter((x: any) => x.user);
+      totalLikes = safeNumber(engagementRaw.likedPosts.total, 0);
+    }
+
+    if (!topCombined.length && Array.isArray(engagementRaw.combined)) {
+      topCombined = engagementRaw.combined
+        .map((x: any) => ({
+          user: typeof x?.user === 'string' ? x.user : '',
+          likedPosts: safeNumber(x?.likedPosts, 0),
+          likedComments: safeNumber(x?.likedComments, 0),
+          total: safeNumber(x?.total, 0),
+        }))
+        .filter((x: any) => x.user);
+    }
+
+    if (!totalComments && engagementRaw.likedComments?.total) {
+      totalComments = safeNumber(engagementRaw.likedComments.total, 0);
+    }
+  }
 
   const engagement = engagementRaw
-    ? {
-        topLikes,
-        topCombined,
-        totalLikes: safeNumber(engagementRaw.totalLikes, 0),
-        totalComments: safeNumber(engagementRaw.totalComments, 0),
-      }
+    ? { topLikes, topCombined, totalLikes, totalComments }
     : undefined;
 
   const activityRaw = obj.activity as any;
@@ -173,15 +208,29 @@ function normalizeStoredInstagramData(input: unknown): InstagramData | null {
         ) as Record<string, number>)
       : undefined;
 
-  const timelineRaw = activityRaw?.timeline;
-  const timeline: { month: string; label: string; logins: number }[] | undefined =
+  const timelineRaw = activityRaw?.timeline ?? obj.timeline;
+  const timeline: { month: string; label: string; postComments: number; reelComments: number; polls: number; questions: number; logins: number }[] | undefined =
     Array.isArray(timelineRaw)
       ? timelineRaw.map((t: any) => ({
           month: typeof t.month === 'string' ? t.month : '',
           label: typeof t.label === 'string' ? t.label : '',
+          postComments: typeof t.postComments === 'number' ? t.postComments : 0,
+          reelComments: typeof t.reelComments === 'number' ? t.reelComments : 0,
+          polls: typeof t.polls === 'number' ? t.polls : 0,
+          questions: typeof t.questions === 'number' ? t.questions : 0,
           logins: typeof t.logins === 'number' ? t.logins : 0,
         }))
       : undefined;
+
+  const pollsRaw = obj.polls as any;
+  const polls = pollsRaw && typeof pollsRaw === 'object'
+    ? { total: safeNumber(pollsRaw.total, 0), monthly: (pollsRaw.monthly as Record<string, number>) || {} }
+    : undefined;
+
+  const questionsRaw = obj.questions as any;
+  const questions = questionsRaw && typeof questionsRaw === 'object'
+    ? { total: safeNumber(questionsRaw.total, 0), monthly: (questionsRaw.monthly as Record<string, number>) || {} }
+    : undefined;
 
   const activity = loginHistory
     ? {
@@ -205,6 +254,9 @@ function normalizeStoredInstagramData(input: unknown): InstagramData | null {
     pendingRequests,
     engagement,
     activity,
+    polls,
+    questions,
+    timeline,
     processedAt,
   };
 }
