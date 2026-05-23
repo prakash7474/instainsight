@@ -15,9 +15,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import StoryModal from '@/components/StoryModal';
 import StoryCard from '@/components/StoryCard';
+import JSZip from 'jszip';
 import {
   type StoryEntry,
   getActiveZip,
+  setActiveZip,
   generateStoryUri,
 } from '@/utils/stories';
 
@@ -84,7 +86,21 @@ export default function StoriesScreen() {
 
         console.log('[Stories] Loaded metadata entries:', entries.length);
 
-        const zip = getActiveZip();
+        let zip = getActiveZip();
+        if (!zip) {
+          const stored = await AsyncStorage.getItem('instainsight_zip_base64');
+          if (stored) {
+            try {
+              const { base64 } = JSON.parse(stored);
+              if (base64) {
+                const restored = new JSZip();
+                await restored.loadAsync(base64, { base64: true });
+                setActiveZip(restored, base64);
+                zip = restored;
+              }
+            } catch { /* ignore parse error */ }
+          }
+        }
         if (!zip) {
           if (mounted) {
             setError('Session expired. Please re-import your ZIP file.');

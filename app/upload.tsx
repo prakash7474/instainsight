@@ -18,7 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import JSZip from 'jszip';
 import { extractMediaFromZip } from '@/utils/parseMediaFromZip';
-import { extractStories } from '@/utils/stories';
+import { extractStories, setActiveZip } from '@/utils/stories';
 import { buildAnalytics, parsePendingFollowRequestsHtml, uniqueUsers, type User } from '@/utils/instagramAnalyticsUtils';
 import { parseInstagramZip } from '@/utils/instagramZipParser';
 import { extractDnaFromZip } from '@/utils/dnaParser';
@@ -132,6 +132,7 @@ export default function UploadScreen() {
                 zip = new JSZip();
                 await zip.loadAsync(b64, { base64: true });
                 zipRef.current = zip;
+                setActiveZip(zip, zipBase64);
                 animateProgress(50);
             }
 

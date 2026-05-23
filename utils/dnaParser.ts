@@ -4,6 +4,7 @@
 
 import JSZip from 'jszip';
 import * as FileSystem from 'expo-file-system';
+import { parseLoginActivity } from '@/utils/instagramHtmlParsers';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -42,11 +43,22 @@ export type AccountAge = {
   era: string;
 };
 
+export type LoginEntry = {
+  time: string;
+  device: string;
+  monthKey: string | null;
+};
+
 export type DnaIdentity = {
   totalChanges: number;
   changeTimeline: { date: string; type: string; old: string; new: string }[];
   accountAgeDays: number;
   accountAge: AccountAge | null;
+  loginActivity: {
+    total: number;
+    logins: LoginEntry[];
+    deviceCounts: Record<string, number>;
+  };
 };
 
 export type DnaData = {
@@ -377,17 +389,19 @@ function parseProfileChangesHTML(html: string): {
   changes: ProfileChange[];
   total: number;
 } {
-  const text = stripHtml(html);
-  const sections = extractEntries(text);
+  const entries = html.split('class="_a6-g"').slice(1);
   const changes: ProfileChange[] = [];
 
-  for (const section of sections) {
-    const typeMatch = section.match(/Changed\s+(\w[\w\s]{0,30}?)(?:\n|\||$)/i)
-      || section.match(/Field\|\n?([^\n|]+)/i);
-    const prevMatch = section.match(/(?:Previous|Old|From)\s*[\|:]\s*([^\n|]{1,80})/i);
-    const newMatch = section.match(/(?:New|Updated|To|Changed to)\s*[\|:]\s*([^\n|]{1,80})/i);
-    const timeMatch = section.match(/(\w{3}\s+\d+,\s+\d{4}\s+\d+:\d+\s*[apm]+)/i)
-      || section.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
+  for (const block of entries) {
+    const h2 = block.match(/<h2[^>]*_a6-h[^>]*>\s*Changed\s+(\w[\w\s]{0,30}?)\s*<\/h2>/i);
+    const text = stripHtml(block);
+    const typeMatch = h2
+      || text.match(/Changed\s+(\w[\w\s]{0,30}?)(?:\n|\||$)/i)
+      || text.match(/Field\|\n?([^\n|]+)/i);
+    const prevMatch = text.match(/(?:Previous|Old|From)\s*[\|:]*\s*([^\n|]{1,80})/i);
+    const newMatch = text.match(/(?:New|Updated|To|Changed to)\s*[\|:]*\s*([^\n|]{1,80})/i);
+    const timeMatch = text.match(/(\w{3}\s+\d+,\s+\d{4}\s+\d+:\d+\s*[apm]+)/i)
+      || text.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
 
     const changeType = typeMatch?.[1]?.trim().toLowerCase() || 'unknown';
     const parsed = timeMatch ? parseInstagramDate(timeMatch[1]) : null;
@@ -771,11 +785,27 @@ export async function extractDnaFromZip(
   const accountAge = signupDate ? buildAccountAge(signupDate) : null;
   const accountAgeDays = accountAge?.ageInDays ?? 0;
 
+  onProgress?.('Parsing login activity...', 59);
+
+  const loginHTML = await readZipFile(zip, [
+    'security_and_login_information/login_and_profile_creation/login_activity.html',
+    'content/login_and_profile_creation/login_activity.html',
+    'login_activity.html',
+  ]);
+  const loginActivityParsed = loginHTML ? parseLoginActivity(loginHTML) : null;
+  const loginActivity = {
+    total: loginActivityParsed?.total ?? 0,
+    logins: loginActivityParsed?.logins ?? [],
+    deviceCounts: loginActivityParsed?.deviceCounts ?? {},
+  };
+  await yieldToEventLoop();
+
   const identity: DnaIdentity = {
     totalChanges: profileChanges?.total ?? 0,
     changeTimeline,
     accountAgeDays,
     accountAge,
+    loginActivity,
   };
 
   onProgress?.('Parsing chats...', 60);

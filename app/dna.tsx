@@ -539,6 +539,15 @@ const IdentityTab = React.memo(({ data }: { data: DnaData }) => {
     private: '#FF5252',
   };
 
+  const deviceIcons: Record<string, string> = {
+    Android: 'phone-portrait-outline',
+    iOS: 'phone-portrait-outline',
+    Windows: 'laptop-outline',
+    Mac: 'laptop-outline',
+  };
+
+  const recentLogins = useMemo(() => identity.loginActivity.logins.slice(-15), [identity.loginActivity.logins]);
+
   return (
     <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
       {identity.accountAge && (
@@ -579,6 +588,39 @@ const IdentityTab = React.memo(({ data }: { data: DnaData }) => {
         <SectionCard title="Change History" icon="time-outline" color="#7C4DFF">
           <Text style={{ color: '#666', fontSize: 14, textAlign: 'center', marginVertical: 20 }}>
             No profile change history found in your export.
+          </Text>
+        </SectionCard>
+      )}
+
+      <SectionCard title="Login Activity" icon="log-in-outline" color="#00BCD4">
+        <View style={styles.chipRow}>
+          <StatChip label="Total Logins" value={identity.loginActivity.total} color="#00BCD4" />
+          {Object.entries(identity.loginActivity.deviceCounts).map(([device, count]) => (
+            <StatChip key={device} label={device} value={count} color="#00BCD4" />
+          ))}
+        </View>
+      </SectionCard>
+
+      {recentLogins.length > 0 && (
+        <SectionCard title="Recent Logins" icon="time-outline" color="#00BCD4">
+          {recentLogins.slice().reverse().map((l, i) => (
+            <View key={i} style={styles.changeRow}>
+              <View style={[styles.changeIconWrap, { backgroundColor: '#00BCD422' }]}>
+                <Ionicons name={(deviceIcons[l.device] || 'globe-outline') as any} size={14} color="#00BCD4" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.changeType}>{l.device || 'Unknown'}</Text>
+              </View>
+              <Text style={styles.changeDate}>{l.time}</Text>
+            </View>
+          ))}
+        </SectionCard>
+      )}
+
+      {recentLogins.length === 0 && (
+        <SectionCard title="Login Activity" icon="log-in-outline" color="#00BCD4">
+          <Text style={{ color: '#666', fontSize: 14, textAlign: 'center', marginVertical: 20 }}>
+            No login activity found in your export.
           </Text>
         </SectionCard>
       )}
