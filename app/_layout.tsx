@@ -58,6 +58,10 @@ export default function RootLayout() {
                     name="dna"
                     options={{ title: 'Instagram DNA', headerBackTitle: 'Back' }}
                 />
+                <Stack.Screen
+                    name="zip-viewer-guide"
+                    options={{ title: 'ZIP Viewer Guide', headerBackTitle: 'Back' }}
+                />
             </Stack>
         </GestureHandlerRootView>
     );

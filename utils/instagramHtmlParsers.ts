@@ -15,9 +15,17 @@ export type ParsedComments = {
   monthly: Record<string, number>;
 };
 
+export type LoginEntryParsed = {
+  time: string;
+  device: string;
+  monthKey: string | null;
+  ip: string;
+  userAgent: string;
+};
+
 export type ParsedLoginActivity = {
   total: number;
-  logins: { time: string; device: string; monthKey: string | null }[];
+  logins: LoginEntryParsed[];
   deviceCounts: Record<string, number>;
   monthly: Record<string, number>;
 };
@@ -177,19 +185,20 @@ export function parseComments(html: string): ParsedComments {
  */
 export function parseLoginActivity(html: string): ParsedLoginActivity {
   const entries = html.split('class="_a6-g"').slice(1);
-  const logins: { time: string; device: string; monthKey: string | null }[] = [];
+  const logins: LoginEntryParsed[] = [];
   const deviceCounts: Record<string, number> = {};
   const monthly: Record<string, number> = {};
   entries.forEach((block) => {
     const text = stripTags(block);
     const time = extractField(text, 'Time');
     const ua = extractField(text, 'User agent');
+    const ip = extractField(text, 'IP address');
     if (!time) return;
     const device = parseDevice(ua || '');
     const mk = parseMonthKey(time);
     if (mk) monthly[mk] = (monthly[mk] || 0) + 1;
     deviceCounts[device] = (deviceCounts[device] || 0) + 1;
-    logins.push({ time, device, monthKey: mk });
+    logins.push({ time, device, monthKey: mk, ip: ip ?? '', userAgent: ua ?? '' });
   });
   return { total: logins.length, logins, deviceCounts, monthly };
 }
