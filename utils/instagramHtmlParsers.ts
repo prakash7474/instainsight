@@ -64,7 +64,7 @@ const FIELD_BLACKLIST = new Set([
 ]);
 
 function extractField(text: string, key: string): string | null {
-  const m = text.match(new RegExp(`${key}[|\\n]([^|\\n]{1,80})`));
+  const m = text.match(new RegExp(`${key}\\s*[|\\n]\\s*([^|\\n]{1,80})`));
   return m ? m[1].trim() : null;
 }
 

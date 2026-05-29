@@ -21,7 +21,7 @@ import { extractMediaFromZip } from '@/utils/parseMediaFromZip';
 import { extractStories, setActiveZip } from '@/utils/stories';
 import { buildAnalytics, parsePendingFollowRequestsHtml, uniqueUsers, type User } from '@/utils/instagramAnalyticsUtils';
 import { parseInstagramZip } from '@/utils/instagramZipParser';
-import { extractDnaFromZip } from '@/utils/dnaParser';
+import { extractDnaFromZip, computePriorityPeople, generateRelationshipInsights } from '@/utils/dnaParser';
 import {
   parseLikedPosts,
   parseLikedComments,
@@ -255,6 +255,36 @@ export default function UploadScreen() {
             await AsyncStorage.setItem('instainsight_data', JSON.stringify(data));
             await AsyncStorage.setItem('instainsight_media', JSON.stringify(media));
             if (dnaData) {
+                // Build priority people from message + engagement data
+                const likesMap: Record<string, number> = {};
+                for (const u of engagement.likedPosts.topUsers) {
+                    const key = u.user.toLowerCase().trim();
+                    likesMap[key] = (likesMap[key] || 0) + u.count;
+                }
+                for (const u of engagement.likedComments.topUsers) {
+                    const key = u.user.toLowerCase().trim();
+                    likesMap[key] = (likesMap[key] || 0) + u.count;
+                }
+                const commentsMap: Record<string, number> = {};
+                for (const u of engagement.postComments.topTargets) {
+                    const key = u.user.toLowerCase().trim();
+                    commentsMap[key] = (commentsMap[key] || 0) + u.count;
+                }
+                for (const u of engagement.reelComments.topTargets) {
+                    const key = u.user.toLowerCase().trim();
+                    commentsMap[key] = (commentsMap[key] || 0) + u.count;
+                }
+                dnaData.socialGraph.priorityPeople = computePriorityPeople(
+                    dnaData.socialGraph.userStats || {},
+                    likesMap,
+                    commentsMap,
+                );
+                dnaData.socialGraph.insights = generateRelationshipInsights(
+                    dnaData.socialGraph,
+                    dnaData.socialGraph.priorityPeople,
+                    storiesData.length,
+                    (media.posts as any)?.length || 0,
+                );
                 await AsyncStorage.setItem('instainsight_dna', JSON.stringify(dnaData));
             }
 

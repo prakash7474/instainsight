@@ -4,17 +4,18 @@ import {
   ActivityIndicator,
   Animated,
   Dimensions,
-  FlatList,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Circle, G, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
+import { Swipeable } from 'react-native-gesture-handler';
 import { useDnaData } from '@/hooks/useDnaData';
-import type { DnaData } from '@/utils/dnaParser';
+import type { DnaData, LoginEntry } from '@/utils/dnaParser';
 import { AccountAgeCard } from '@/components/AccountAgeCard';
 
 const { width } = Dimensions.get('window');
@@ -306,9 +307,35 @@ function ActivityTimelineChart({ daily }: { daily: { date: string; stories: numb
 
 // ─── Social Graph Tab ────────────────────────────────────────────────────────
 
+function BreakdownDot({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <View style={bdStyles.dot}>
+      <View style={[bdStyles.dotBar, { backgroundColor: color + '33' }]}>
+        <View style={[bdStyles.dotFill, { width: `${Math.min(value * 100, 100)}%`, backgroundColor: color }]} />
+      </View>
+      <Text style={bdStyles.dotLabel}>{label}</Text>
+    </View>
+  );
+}
+
+const bdStyles = StyleSheet.create({
+  dot: { flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1 },
+  dotBar: { height: 4, borderRadius: 2, flex: 1, overflow: 'hidden' },
+  dotFill: { height: '100%', borderRadius: 2 },
+  dotLabel: { fontSize: 9, color: '#888', fontWeight: '700', width: 14, textAlign: 'right' },
+});
+
 const SocialGraphTab = React.memo(({ data }: { data: DnaData }) => {
   const { socialGraph } = data;
   const topPeople = useMemo(() => socialGraph.topPeople.slice(0, 10), [socialGraph.topPeople]);
+  const priorityPeople = useMemo(() => (socialGraph as any).priorityPeople?.slice(0, 15) ?? [], [socialGraph]);
+
+  const tierColors: Record<string, string> = {
+    'Inner Circle': '#FFD700',
+    'Close': '#00E676',
+    'Casual': '#FFC107',
+    'Low': '#888',
+  };
 
   if (!socialGraph.totalChats) {
     return (
@@ -349,6 +376,55 @@ const SocialGraphTab = React.memo(({ data }: { data: DnaData }) => {
                 />
               </View>
               <Text style={styles.contactCount}>{p.count}</Text>
+            </View>
+          ))}
+        </SectionCard>
+      )}
+
+      {priorityPeople.length > 0 && (
+        <SectionCard title="Priority People" icon="trophy-outline" color="#FFD700">
+          {priorityPeople.map((p: any, i: number) => {
+            const tierColor = tierColors[p.tier] || '#888';
+            return (
+              <View key={p.user} style={styles.priorityRow}>
+                <View style={styles.priorityRank}>
+                  <Text style={[styles.priorityRankText, { color: tierColor }]}>#{i + 1}</Text>
+                </View>
+                <View style={styles.priorityInfo}>
+                  <View style={styles.priorityNameRow}>
+                    <Text style={styles.priorityName}>@{p.user}</Text>
+                    <View style={[styles.tierBadge, { backgroundColor: tierColor + '22', borderColor: tierColor }]}>
+                      <Text style={[styles.tierText, { color: tierColor }]}>{p.tier}</Text>
+                    </View>
+                  </View>
+                  <View style={styles.priorityScoreRow}>
+                    <View style={styles.priorityScoreTrack}>
+                      <View style={[styles.priorityScoreFill, { width: `${Math.min(p.score * 100, 100)}%`, backgroundColor: tierColor }]} />
+                    </View>
+                    <Text style={[styles.priorityScoreLabel, { color: tierColor }]}>{p.score.toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.breakdownRow}>
+                    <BreakdownDot label="F" value={p.breakdown.frequency} color="#00E676" />
+                    <BreakdownDot label="R" value={p.breakdown.recency} color="#2196F3" />
+                    <BreakdownDot label="B" value={p.breakdown.balance} color="#FF9800" />
+                    <BreakdownDot label="D" value={p.breakdown.depth} color="#E91E63" />
+                    <BreakdownDot label="I" value={p.breakdown.interaction} color="#7C4DFF" />
+                  </View>
+                </View>
+              </View>
+            );
+          })}
+        </SectionCard>
+      )}
+
+      {(socialGraph.insights ?? []).length > 0 && (
+        <SectionCard title="Relationship Insights" icon="bulb-outline" color="#FFC107">
+          {(socialGraph.insights ?? []).slice(0, 6).map((insight: string, i: number) => (
+            <View key={i} style={[styles.changeRow, { marginBottom: 0 }]}>
+              <View style={[styles.changeIconWrap, { backgroundColor: '#FFC10722' }]}>
+                <Ionicons name={i === 0 ? 'flash-outline' : 'ellipse'} size={i === 0 ? 16 : 8} color="#FFC107" />
+              </View>
+              <Text style={[styles.changeType, { color: '#ddd', fontSize: 13 }]}>{insight}</Text>
             </View>
           ))}
         </SectionCard>
@@ -515,11 +591,79 @@ function DomainDonut({ domains }: { domains: { domain: string; count: number }[]
   );
 }
 
+// ─── Device Card ──────────────────────────────────────────────────────────────
+
+function DeviceCard({ name, count, total, color, icon }: { name: string; count: number; total: number; color: string; icon: string }) {
+  const pct = total > 0 ? (count / total) * 100 : 0;
+  const r = 28;
+  const circumference = 2 * Math.PI * r;
+  const offset = circumference - (pct / 100) * circumference;
+
+  return (
+    <View style={idStyles.deviceCard}>
+      <Svg width={72} height={72}>
+        <Circle cx={36} cy={36} r={r} stroke="#2A2A40" strokeWidth={6} fill="none" />
+        <Circle
+          cx={36} cy={36} r={r}
+          stroke={color}
+          strokeWidth={6}
+          fill="none"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+          transform="rotate(-90 36 36)"
+        />
+      </Svg>
+      <View style={idStyles.deviceIconWrap}>
+        <Ionicons name={icon as any} size={18} color={color} />
+      </View>
+      <Text style={idStyles.deviceCount}>{count}</Text>
+      <Text style={idStyles.devicePct}>{Math.round(pct)}%</Text>
+      <Text style={idStyles.deviceName}>{name}</Text>
+    </View>
+  );
+}
+
+// ─── Session Row (swipeable) ──────────────────────────────────────────────────
+
+function SessionRow({ login, deviceIcons }: { login: LoginEntry; deviceIcons: Record<string, string>; }) {
+  const [ipRevealed, setIpRevealed] = useState(false);
+
+  const renderRightActions = () => (
+    <TouchableOpacity
+      style={idStyles.revealBtn}
+      onPress={() => setIpRevealed(prev => !prev)}
+    >
+      <Ionicons name="eye-outline" size={16} color="#00BCD4" />
+      <Text style={idStyles.revealText}>{ipRevealed ? 'Hide IP' : 'Show IP'}</Text>
+    </TouchableOpacity>
+  );
+
+  return (
+    <Swipeable renderRightActions={renderRightActions} overshootRight={false}>
+      <View style={idStyles.sessionRow}>
+        <View style={[idStyles.sessionIcon, { backgroundColor: '#00BCD422' }]}>
+          <Ionicons name={(deviceIcons[login.device] || 'globe-outline') as any} size={14} color="#00BCD4" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={idStyles.sessionDevice}>{login.device || 'Unknown'}</Text>
+          {ipRevealed && (login as any).ip ? (
+            <Text style={idStyles.sessionIp}>{(login as any).ip}</Text>
+          ) : null}
+        </View>
+        <Text style={idStyles.sessionTime}>{login.time}</Text>
+      </View>
+    </Swipeable>
+  );
+}
+
 // ─── Identity Tab ────────────────────────────────────────────────────────────
 
 const IdentityTab = React.memo(({ data }: { data: DnaData }) => {
   const { identity } = data;
   const recentChanges = useMemo(() => identity.changeTimeline.slice(-20), [identity.changeTimeline]);
+  const [deviceFilter, setDeviceFilter] = useState<string | null>(null);
+  const [searchText, setSearchText] = useState('');
 
   const changeTypeIcons: Record<string, string> = {
     username: 'at-outline',
@@ -546,7 +690,34 @@ const IdentityTab = React.memo(({ data }: { data: DnaData }) => {
     Mac: 'laptop-outline',
   };
 
-  const recentLogins = useMemo(() => identity.loginActivity.logins.slice(-15), [identity.loginActivity.logins]);
+  const deviceColors: Record<string, string> = {
+    Android: '#00E676',
+    iOS: '#7C4DFF',
+    Windows: '#00BCD4',
+    Mac: '#E040FB',
+  };
+
+  const { total, logins, deviceCounts } = identity.loginActivity;
+
+  const deviceEntries = useMemo(() =>
+    Object.entries(deviceCounts).sort(([, a], [, b]) => b - a),
+    [deviceCounts]
+  );
+
+  const filteredLogins = useMemo(() => {
+    let list = logins;
+    if (deviceFilter) {
+      list = list.filter(l => l.device === deviceFilter);
+    }
+    if (searchText.trim()) {
+      const q = searchText.toLowerCase().trim();
+      list = list.filter(l =>
+        l.device?.toLowerCase().includes(q) ||
+        (l as any).ip?.toLowerCase().includes(q)
+      );
+    }
+    return list.slice(-50).reverse();
+  }, [logins, deviceFilter, searchText]);
 
   return (
     <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
@@ -592,38 +763,62 @@ const IdentityTab = React.memo(({ data }: { data: DnaData }) => {
         </SectionCard>
       )}
 
-      <SectionCard title="Login Activity" icon="log-in-outline" color="#00BCD4">
-        <View style={styles.chipRow}>
-          <StatChip label="Total Logins" value={identity.loginActivity.total} color="#00BCD4" />
-          {Object.entries(identity.loginActivity.deviceCounts).map(([device, count]) => (
-            <StatChip key={device} label={device} value={count} color="#00BCD4" />
-          ))}
+      {/* Device Cards */}
+      {deviceEntries.length > 0 && (
+        <SectionCard title="Devices" icon="hardware-chip-outline" color="#00BCD4">
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingVertical: 4 }}>
+            {deviceEntries.map(([device, count]) => (
+              <DeviceCard
+                key={device}
+                name={device}
+                count={count}
+                total={total}
+                color={deviceColors[device] || '#888'}
+                icon={deviceIcons[device] || 'globe-outline'}
+              />
+            ))}
+          </ScrollView>
+        </SectionCard>
+      )}
+
+      {/* Session List */}
+      <SectionCard title="Sessions" icon="log-in-outline" color="#00BCD4">
+        <View style={idStyles.filterRow}>
+          <TextInput
+            style={idStyles.searchInput}
+            placeholder="Search device or IP..."
+            placeholderTextColor="#555"
+            value={searchText}
+            onChangeText={setSearchText}
+          />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+            <TouchableOpacity
+              style={[idStyles.filterChip, !deviceFilter && idStyles.filterChipActive]}
+              onPress={() => setDeviceFilter(null)}
+            >
+              <Text style={[idStyles.filterChipText, !deviceFilter && idStyles.filterChipTextActive]}>All</Text>
+            </TouchableOpacity>
+            {deviceEntries.map(([device]) => (
+              <TouchableOpacity
+                key={device}
+                style={[idStyles.filterChip, deviceFilter === device && idStyles.filterChipActive]}
+                onPress={() => setDeviceFilter(device === deviceFilter ? null : device)}
+              >
+                <Text style={[idStyles.filterChipText, deviceFilter === device && idStyles.filterChipTextActive]}>{device}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
         </View>
-      </SectionCard>
-
-      {recentLogins.length > 0 && (
-        <SectionCard title="Recent Logins" icon="time-outline" color="#00BCD4">
-          {recentLogins.slice().reverse().map((l, i) => (
-            <View key={i} style={styles.changeRow}>
-              <View style={[styles.changeIconWrap, { backgroundColor: '#00BCD422' }]}>
-                <Ionicons name={(deviceIcons[l.device] || 'globe-outline') as any} size={14} color="#00BCD4" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.changeType}>{l.device || 'Unknown'}</Text>
-              </View>
-              <Text style={styles.changeDate}>{l.time}</Text>
-            </View>
-          ))}
-        </SectionCard>
-      )}
-
-      {recentLogins.length === 0 && (
-        <SectionCard title="Login Activity" icon="log-in-outline" color="#00BCD4">
+        <Text style={idStyles.sessionCount}>{filteredLogins.length} session{filteredLogins.length !== 1 ? 's' : ''}</Text>
+        {filteredLogins.map((l, i) => (
+          <SessionRow key={i} login={l} deviceIcons={deviceIcons} />
+        ))}
+        {filteredLogins.length === 0 && (
           <Text style={{ color: '#666', fontSize: 14, textAlign: 'center', marginVertical: 20 }}>
-            No login activity found in your export.
+            No matching sessions found.
           </Text>
-        </SectionCard>
-      )}
+        )}
+      </SectionCard>
     </ScrollView>
   );
 });
@@ -697,6 +892,90 @@ export default function DnaScreen() {
 }
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
+
+const idStyles = StyleSheet.create({
+  deviceCard: {
+    width: 100,
+    backgroundColor: '#1A1A2E',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#2A2A40',
+    padding: 12,
+    alignItems: 'center',
+    gap: 4,
+    position: 'relative',
+  },
+  deviceIconWrap: {
+    position: 'absolute',
+    top: 32,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#0F0F1A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deviceCount: { color: '#fff', fontSize: 16, fontWeight: '800' },
+  devicePct: { color: '#888', fontSize: 11 },
+  deviceName: { color: '#aaa', fontSize: 10, fontWeight: '600', marginTop: 2 },
+  sessionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    gap: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2A2A4044',
+  },
+  sessionIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sessionDevice: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  sessionIp: { color: '#00BCD4', fontSize: 11, marginTop: 1 },
+  sessionTime: { color: '#666', fontSize: 10, width: 60, textAlign: 'right' },
+  revealBtn: {
+    backgroundColor: '#0F2A3A',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    flexDirection: 'row',
+    gap: 4,
+    marginVertical: 4,
+  },
+  revealText: { color: '#00BCD4', fontSize: 11, fontWeight: '700' },
+  filterRow: { gap: 8, marginBottom: 8 },
+  searchInput: {
+    backgroundColor: '#1A1A2E',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#2A2A40',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    color: '#fff',
+    fontSize: 13,
+  },
+  filterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#1A1A2E',
+    borderWidth: 1,
+    borderColor: '#2A2A40',
+  },
+  filterChipActive: {
+    backgroundColor: '#00BCD422',
+    borderColor: '#00BCD4',
+  },
+  filterChipText: { color: '#888', fontSize: 11, fontWeight: '700' },
+  filterChipTextActive: { color: '#00BCD4' },
+  sessionCount: { color: '#666', fontSize: 11, marginBottom: 4 },
+});
+
+// ─── Main Styles ──────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0F0F1A' },
@@ -787,4 +1066,29 @@ const styles = StyleSheet.create({
   changeType: { color: '#fff', fontSize: 13, fontWeight: '600' },
   changeDetail: { color: '#888', fontSize: 11, marginTop: 1 },
   changeDate: { color: '#666', fontSize: 10, width: 60, textAlign: 'right' },
+  priorityRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 10,
+    gap: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2A2A4044',
+  },
+  priorityRank: { width: 28, paddingTop: 2 },
+  priorityRankText: { fontSize: 13, fontWeight: '800' },
+  priorityInfo: { flex: 1, gap: 4 },
+  priorityNameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  priorityName: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  tierBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  tierText: { fontSize: 9, fontWeight: '700' },
+  priorityScoreRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  priorityScoreTrack: { height: 4, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 2, flex: 1, overflow: 'hidden' },
+  priorityScoreFill: { height: '100%', borderRadius: 2 },
+  priorityScoreLabel: { fontSize: 11, fontWeight: '700', width: 32, textAlign: 'right' },
+  breakdownRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
 });
