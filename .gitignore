@@ -5,3 +5,11 @@
 expo-env.d.ts
 .expo/
 # @end expo-cli
+
+node_modules/
+.idea/
+__pycache__/
+*.pyc
+*.zip
+emulator_screenshot.png
+next_plan_update.txt
